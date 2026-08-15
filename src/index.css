@@ -1,0 +1,70 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-surface: #05080f;
+  --color-surface-raised: #080d18;
+}
+
+:root {
+  color-scheme: dark;
+  /* The Chinese names for elements 104-118 use rare CJK Extension B/C codepoints.
+     Listing the Noto/Source Han families first gives systems that have them a
+     chance to render the glyphs rather than a tofu box. */
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+    'Noto Sans CJK SC', 'Noto Sans SC', 'Source Han Sans SC', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-surface);
+  color: #e2e8f0;
+  /* Two faint radial washes give the near-black background some depth without
+     competing with the category colours. */
+  background-image:
+    radial-gradient(ellipse 80% 55% at 50% -10%, rgba(56, 189, 248, 0.1), transparent),
+    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(129, 140, 248, 0.07), transparent);
+  background-attachment: fixed;
+}
+
+/* Slim, dark scrollbars so panels don't get a bright system-coloured gutter. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.25);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(148, 163, 184, 0.4);
+}
+
+/* Respect users who have asked the OS to reduce motion: the periodic table's
+   hover/scale transitions and panel slides collapse to instant state changes.
+   The 3D electron animation is opt-out through its own toggle. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
