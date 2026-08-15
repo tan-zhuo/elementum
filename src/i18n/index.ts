@@ -127,6 +127,10 @@ const STRINGS = {
   },
   moleculeCount: { zh: '个分子', en: 'molecules' },
 
+  // Footer
+  blog: { zh: '博客', en: 'Blog' },
+  sourceCode: { zh: '开源地址', en: 'Source code' },
+
   lanthanides: { zh: '镧系', en: 'Lanthanides' },
   actinides: { zh: '锕系', en: 'Actinides' },
   loading3d: { zh: '正在加载 3D 视图…', en: 'Loading 3D view…' },

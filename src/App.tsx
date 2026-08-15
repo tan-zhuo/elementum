@@ -13,6 +13,7 @@ import { ComparePanel } from './components/ComparePanel/ComparePanel'
 import { MoleculeGallery } from './components/MoleculeGallery/MoleculeGallery'
 import { MoleculeFilter } from './components/MoleculeGallery/MoleculeFilter'
 import { MoleculeDetail } from './components/MoleculeDetail/MoleculeDetail'
+import { Footer } from './components/Footer/Footer'
 
 function LocaleToggle() {
   const locale = useAppStore((s) => s.locale)
@@ -160,6 +161,8 @@ export default function App() {
           </>
         )}
       </main>
+
+      <Footer />
 
       {view === 'elements' && <ComparePanel />}
 
