@@ -14,6 +14,7 @@ import { MoleculeGallery } from './components/MoleculeGallery/MoleculeGallery'
 import { MoleculeFilter } from './components/MoleculeGallery/MoleculeFilter'
 import { MoleculeDetail } from './components/MoleculeDetail/MoleculeDetail'
 import { Footer } from './components/Footer/Footer'
+import { ThemePicker } from './components/ThemePicker/ThemePicker'
 
 function LocaleToggle() {
   const locale = useAppStore((s) => s.locale)
@@ -25,9 +26,9 @@ function LocaleToggle() {
       aria-label={translate('language', locale)}
       className="shrink-0 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-white/30 hover:text-slate-50"
     >
-      <span className={locale === 'zh' ? 'text-cyan-300' : ''}>中</span>
+      <span className={locale === 'zh' ? 'accent-text' : ''}>中</span>
       <span className="mx-1 text-slate-600">/</span>
-      <span className={locale === 'en' ? 'text-cyan-300' : ''}>EN</span>
+      <span className={locale === 'en' ? 'accent-text' : ''}>EN</span>
     </button>
   )
 }
@@ -57,7 +58,7 @@ function ViewSwitcher() {
           onClick={() => setView(key)}
           className={`rounded-[7px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
             view === key
-              ? 'bg-cyan-400/15 text-cyan-200'
+              ? 'accent-bg accent-text'
               : 'text-slate-400 hover:text-slate-100'
           }`}
         >
@@ -70,6 +71,7 @@ function ViewSwitcher() {
 
 export default function App() {
   const locale = useAppStore((s) => s.locale)
+  const theme = useAppStore((s) => s.theme)
   const view = useAppStore((s) => s.view)
   const selected = useAppStore((s) => s.selected)
   const selectedMolecule = useAppStore((s) => s.selectedMolecule)
@@ -84,6 +86,15 @@ export default function App() {
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
     document.title = `${translate('appTitle', locale)} · ${translate('appSubtitle', locale)}`
   }, [locale])
+
+  // The whole palette hangs off this one attribute. The browser chrome colour is
+  // kept in step so a themed page does not sit under a mismatched status bar.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    const surface = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim()
+    const meta = document.querySelector('meta[name="theme-color"]')
+    if (surface && meta) meta.setAttribute('content', surface)
+  }, [theme])
 
   // Hand off from the inlined splash once the table is genuinely on screen. The
   // splash enforces its own minimum play time from here.
@@ -109,17 +120,19 @@ export default function App() {
 
   return (
     <div className="min-h-full">
-      <header className="sticky top-0 z-20 border-b border-white/8 bg-[#05080f]/85 backdrop-blur">
+      <header className="surface-veil sticky top-0 z-20 border-b border-white/8 backdrop-blur">
         <div className="mx-auto flex max-w-[100rem] flex-col gap-3 px-3 py-3 sm:px-5">
-          <div className="flex items-center gap-2 sm:gap-3">
+          {/* Below `sm` the search drops to its own line: at 390px it would
+              otherwise be squeezed to less than its own padding. */}
+          <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-3">
             <div className="flex shrink-0 items-center gap-2.5">
               <span
                 aria-hidden
-                className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-400/40 bg-cyan-400/10"
+                className="accent-border accent-bg relative flex h-8 w-8 items-center justify-center rounded-lg border"
               >
-                <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.9)]" />
-                <span className="absolute inset-0.5 rounded-md border border-cyan-300/25" />
-                <span className="absolute inset-1.5 rotate-45 rounded-sm border border-cyan-300/20" />
+                <span className="accent-dot h-2 w-2 rounded-full" />
+                <span className="accent-border absolute inset-0.5 rounded-md border" />
+                <span className="accent-border absolute inset-1.5 rotate-45 rounded-sm border" />
               </span>
               <div className="hidden leading-tight xl:block">
                 <h1 className="text-sm font-semibold text-slate-100">
@@ -131,10 +144,11 @@ export default function App() {
 
             <ViewSwitcher />
 
-            <div className="min-w-0 flex-1">
+            <div className="order-last w-full min-w-0 sm:order-none sm:w-auto sm:flex-1">
               <SearchBar />
             </div>
 
+            <ThemePicker />
             <LocaleToggle />
           </div>
 
@@ -188,7 +202,7 @@ export default function App() {
                     : molecule.name
                   : undefined
             }
-            className="fixed inset-y-0 right-0 z-40 w-full max-w-[64rem] border-l border-white/10 bg-[#05080f] shadow-2xl"
+            className="surface-solid fixed inset-y-0 right-0 z-40 w-full max-w-[64rem] border-l border-white/10 shadow-2xl"
           >
             {element ? (
               <ElementDetail element={element} />

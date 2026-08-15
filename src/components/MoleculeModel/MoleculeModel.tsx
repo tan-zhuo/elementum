@@ -64,7 +64,7 @@ export function MoleculeModel({ molecule }: { molecule: Molecule }) {
     <div
       className={
         fullscreen
-          ? 'fixed inset-0 z-50 flex flex-col bg-[#04070f]'
+          ? 'surface-deep-solid fixed inset-0 z-50 flex flex-col'
           : 'relative flex h-full min-h-[20rem] flex-col overflow-hidden rounded-xl border border-white/10 bg-[radial-gradient(ellipse_at_center,rgba(30,58,138,0.18),transparent_70%)]'
       }
     >

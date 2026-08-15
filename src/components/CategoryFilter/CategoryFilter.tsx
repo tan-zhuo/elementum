@@ -73,7 +73,7 @@ export function CategoryFilter() {
           aria-pressed={heatmap === null}
           className={`shrink-0 rounded-md border px-2 py-1 text-[11px] transition-colors ${
             heatmap === null
-              ? 'border-cyan-400/60 bg-cyan-400/15 text-cyan-200'
+              ? 'accent-active'
               : 'border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/25 hover:text-slate-200'
           }`}
         >
@@ -88,7 +88,7 @@ export function CategoryFilter() {
             aria-pressed={heatmap === key}
             className={`shrink-0 rounded-md border px-2 py-1 text-[11px] transition-colors ${
               heatmap === key
-                ? 'border-cyan-400/60 bg-cyan-400/15 text-cyan-200'
+                ? 'accent-active'
                 : 'border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/25 hover:text-slate-200'
             }`}
           >

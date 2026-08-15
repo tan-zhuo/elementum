@@ -127,9 +127,35 @@ const STRINGS = {
   },
   moleculeCount: { zh: '个分子', en: 'molecules' },
 
+  // Theme
+  theme: { zh: '主题配色', en: 'Theme' },
+
   // Footer
   blog: { zh: '博客', en: 'Blog' },
   sourceCode: { zh: '开源地址', en: 'Source code' },
+  footerTagline: {
+    zh: '纯前端的化学可视化：元素、分子与它们在生活中的位置。',
+    en: 'A pure front-end chemistry visualisation: elements, molecules, and where they show up in daily life.',
+  },
+  footerSections: { zh: '板块', en: 'Explore' },
+  footerProject: { zh: '项目', en: 'Project' },
+  footerData: { zh: '数据来源', en: 'Data sources' },
+  footerElementData: { zh: '元素数据', en: 'Element data' },
+  footerGeometryData: { zh: '键长与键角', en: 'Bond lengths & angles' },
+  footerRadiiData: { zh: '原子半径', en: 'Atomic radii' },
+  footerSummaryData: { zh: '元素英文简介', en: 'Element summaries' },
+  footerBuiltWith: { zh: '技术栈', en: 'Built with' },
+  elementCount: { zh: '个元素', en: 'elements' },
+  footerNoBackend: {
+    zh: '无后端 · 无追踪 · 数据全部内置，离线可用',
+    en: 'No backend, no tracking, all data bundled — works offline',
+  },
+  footerDisclaimer: {
+    zh: '内容仅供学习参考，不作为化学操作或医疗建议',
+    en: 'For learning and reference only — not chemical or medical advice',
+  },
+  footerReadme: { zh: '项目说明', en: 'README' },
+  footerIssues: { zh: '问题反馈', en: 'Issues' },
 
   lanthanides: { zh: '镧系', en: 'Lanthanides' },
   actinides: { zh: '锕系', en: 'Actinides' },

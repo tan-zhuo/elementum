@@ -1,8 +1,171 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-surface: #05080f;
-  --color-surface-raised: #080d18;
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+}
+
+/*
+ * Accent themes.
+ *
+ * One variable set per theme, so no component ever names a colour: switching
+ * themes is a single `data-theme` attribute on <html>. Alpha is baked into the
+ * variables rather than applied with Tailwind's `/opacity` modifier, because a
+ * modifier on a var() colour has to go through color-mix and is easy to get
+ * subtly wrong across browsers.
+ *
+ * Element and molecule category colours are deliberately NOT themed — they carry
+ * meaning, and recolouring them would break the legend.
+ */
+:root,
+[data-theme='cyan'] {
+  --accent: #22d3ee;
+  --accent-text: #67e8f9;
+  --accent-fill: rgba(34, 211, 238, 0.15);
+  --accent-fill-strong: rgba(34, 211, 238, 0.28);
+  --accent-line: rgba(34, 211, 238, 0.55);
+  --accent-line-soft: rgba(34, 211, 238, 0.3);
+  --accent-glow: rgba(103, 232, 249, 0.9);
+  --wash-1: rgba(56, 189, 248, 0.1);
+  --wash-2: rgba(129, 140, 248, 0.07);
+  --surface: #05080f;
+  --surface-raised: #080d18;
+  --surface-deep: #04070f;
+}
+
+[data-theme='violet'] {
+  --accent: #a78bfa;
+  --accent-text: #c4b5fd;
+  --accent-fill: rgba(167, 139, 250, 0.16);
+  --accent-fill-strong: rgba(167, 139, 250, 0.3);
+  --accent-line: rgba(167, 139, 250, 0.55);
+  --accent-line-soft: rgba(167, 139, 250, 0.3);
+  --accent-glow: rgba(196, 181, 253, 0.9);
+  --wash-1: rgba(139, 92, 246, 0.12);
+  --wash-2: rgba(236, 72, 153, 0.07);
+  --surface: #07060f;
+  --surface-raised: #0c0a18;
+  --surface-deep: #05040c;
+}
+
+[data-theme='emerald'] {
+  --accent: #34d399;
+  --accent-text: #6ee7b7;
+  --accent-fill: rgba(52, 211, 153, 0.15);
+  --accent-fill-strong: rgba(52, 211, 153, 0.28);
+  --accent-line: rgba(52, 211, 153, 0.55);
+  --accent-line-soft: rgba(52, 211, 153, 0.3);
+  --accent-glow: rgba(110, 231, 183, 0.9);
+  --wash-1: rgba(16, 185, 129, 0.11);
+  --wash-2: rgba(45, 212, 191, 0.07);
+  --surface: #04090c;
+  --surface-raised: #071014;
+  --surface-deep: #03070a;
+}
+
+[data-theme='amber'] {
+  --accent: #fbbf24;
+  --accent-text: #fcd34d;
+  --accent-fill: rgba(251, 191, 36, 0.15);
+  --accent-fill-strong: rgba(251, 191, 36, 0.28);
+  --accent-line: rgba(251, 191, 36, 0.55);
+  --accent-line-soft: rgba(251, 191, 36, 0.3);
+  --accent-glow: rgba(252, 211, 77, 0.9);
+  --wash-1: rgba(245, 158, 11, 0.1);
+  --wash-2: rgba(249, 115, 22, 0.07);
+  --surface: #0a0803;
+  --surface-raised: #120e06;
+  --surface-deep: #070502;
+}
+
+[data-theme='rose'] {
+  --accent: #fb7185;
+  --accent-text: #fda4af;
+  --accent-fill: rgba(251, 113, 133, 0.15);
+  --accent-fill-strong: rgba(251, 113, 133, 0.28);
+  --accent-line: rgba(251, 113, 133, 0.55);
+  --accent-line-soft: rgba(251, 113, 133, 0.3);
+  --accent-glow: rgba(253, 164, 175, 0.9);
+  --wash-1: rgba(244, 63, 94, 0.1);
+  --wash-2: rgba(217, 70, 239, 0.07);
+  --surface: #0b0609;
+  --surface-raised: #140b10;
+  --surface-deep: #080407;
+}
+
+[data-theme='graphite'] {
+  --accent: #94a3b8;
+  --accent-text: #cbd5e1;
+  --accent-fill: rgba(148, 163, 184, 0.16);
+  --accent-fill-strong: rgba(148, 163, 184, 0.28);
+  --accent-line: rgba(148, 163, 184, 0.55);
+  --accent-line-soft: rgba(148, 163, 184, 0.3);
+  --accent-glow: rgba(203, 213, 225, 0.85);
+  --wash-1: rgba(148, 163, 184, 0.08);
+  --wash-2: rgba(100, 116, 139, 0.06);
+  --surface: #07080a;
+  --surface-raised: #0d0f13;
+  --surface-deep: #050608;
+}
+
+/* Semantic accent classes, so a themed control is one class rather than four
+   arbitrary-value utilities repeated across components. */
+.accent-text {
+  color: var(--accent-text);
+}
+
+.accent-active {
+  border-color: var(--accent-line);
+  background-color: var(--accent-fill);
+  color: var(--accent-text);
+}
+
+.accent-hover:hover {
+  border-color: var(--accent-line-soft);
+  color: var(--accent-text);
+}
+
+.accent-focus:focus {
+  border-color: var(--accent-line);
+  background-color: rgba(255, 255, 255, 0.06);
+  outline: none;
+  box-shadow: 0 0 0 1px var(--accent-fill-strong);
+}
+
+.accent-border {
+  border-color: var(--accent-line-soft);
+}
+
+.accent-bg {
+  background-color: var(--accent-fill);
+}
+
+.accent-dot {
+  background-color: var(--accent-text);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* Translucent versions of the themed surfaces, for sticky chrome and popovers.
+   Written as color-mix rather than a Tailwind opacity modifier because the base
+   colour is a variable. */
+.surface-veil {
+  background-color: color-mix(in srgb, var(--surface) 85%, transparent);
+}
+
+.surface-raised-veil {
+  background-color: color-mix(in srgb, var(--surface-raised) 95%, transparent);
+}
+
+.surface-deep-veil {
+  background-color: color-mix(in srgb, var(--surface-deep) 60%, transparent);
+}
+
+.surface-solid {
+  background-color: var(--surface);
+}
+
+.surface-deep-solid {
+  background-color: var(--surface-deep);
 }
 
 :root {
@@ -26,14 +189,15 @@ body,
 
 body {
   margin: 0;
-  background-color: var(--color-surface);
+  background-color: var(--surface);
   color: #e2e8f0;
   /* Two faint radial washes give the near-black background some depth without
-     competing with the category colours. */
+     competing with the category colours. Both follow the active theme. */
   background-image:
-    radial-gradient(ellipse 80% 55% at 50% -10%, rgba(56, 189, 248, 0.1), transparent),
-    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(129, 140, 248, 0.07), transparent);
+    radial-gradient(ellipse 80% 55% at 50% -10%, var(--wash-1), transparent),
+    radial-gradient(ellipse 60% 50% at 90% 100%, var(--wash-2), transparent);
   background-attachment: fixed;
+  transition: background-color 400ms ease;
 }
 
 /* Slim, dark scrollbars so panels don't get a bright system-coloured gutter. */

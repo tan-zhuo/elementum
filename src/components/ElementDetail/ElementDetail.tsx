@@ -213,7 +213,7 @@ export function ElementDetail({ element }: DetailProps) {
               </div>
               <div>
                 <div className="text-[11px] text-slate-500">{t('electronConfigurationShort')}</div>
-                <div className="mt-0.5 break-words font-mono text-sm text-cyan-300">
+                <div className="accent-text mt-0.5 break-words font-mono text-sm">
                   {element.electronConfigurationShort}
                 </div>
               </div>
@@ -305,7 +305,7 @@ export function ElementDetail({ element }: DetailProps) {
               href={element.source}
               target="_blank"
               rel="noreferrer noopener"
-              className="mt-2 inline-block text-xs text-cyan-400 hover:text-cyan-300 hover:underline"
+              className="accent-text mt-2 inline-block text-xs hover:underline"
             >
               {t('readMore')} ↗
             </a>
@@ -319,7 +319,7 @@ export function ElementDetail({ element }: DetailProps) {
               title={compareFull ? t('compareFull') : undefined}
               className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                 inCompare
-                  ? 'border-cyan-400/60 bg-cyan-400/15 text-cyan-200'
+                  ? 'accent-active'
                   : 'border-white/10 bg-white/[0.03] text-slate-300 hover:border-white/30 hover:text-slate-100'
               }`}
             >

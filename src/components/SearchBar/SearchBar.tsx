@@ -73,7 +73,7 @@ export function SearchBar() {
         }}
         placeholder={translate(placeholderKey, locale)}
         aria-label={translate(placeholderKey, locale)}
-        className="w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-9 pr-16 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400/50 focus:bg-white/[0.06] focus:outline-none focus:ring-1 focus:ring-cyan-400/40 [&::-webkit-search-cancel-button]:appearance-none"
+        className="accent-focus w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-9 pr-3 text-sm sm:pr-16 sm:text-sm text-slate-100 placeholder:text-slate-500 [&::-webkit-search-cancel-button]:appearance-none"
       />
 
       {query ? (

@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#05080f" />
     <meta
       name="description"
-      content="交互式 3D 元素周期表与分子结构：118 种元素、53 种常见分子，点击查看原子核、电子层与真实三维分子构型。纯前端，支持搜索、分类筛选、属性热力图与中英文切换。"
+      content="交互式 3D 元素周期表与分子结构：118 种元素、129 种分子（含二十种氨基酸），点击查看原子核、电子层与真实三维分子构型。纯前端，支持搜索、分类筛选、属性热力图、主题配色与中英文切换。"
     />
     <title>元素周期表 · 3D 交互式原子结构</title>
 
@@ -19,29 +19,68 @@
       before the JS bundle has even downloaded — otherwise the user stares at a
       blank page first and only then sees a "loading" screen. React dismisses it
       once it has mounted AND the minimum play time has elapsed.
+
+      The palette mirrors the app's themes and is read from the persisted
+      preference below, so a user on the amber theme never gets a cyan flash.
     -->
     <style>
       #splash {
+        --sp-surface: #05080f;
+        --sp-accent: #67e8f9;
+        --sp-ring-1: #5eead4;
+        --sp-ring-2: #7dd3fc;
+        --sp-ring-3: #818cf8;
+        --sp-wash-1: rgba(56, 189, 248, 0.13);
+        --sp-wash-2: rgba(129, 140, 248, 0.1);
+
         position: fixed;
         inset: 0;
         z-index: 9999;
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 1.75rem;
-        background-color: #05080f;
+        overflow: hidden;
+        background-color: var(--sp-surface);
         background-image:
-          radial-gradient(ellipse 80% 55% at 50% 20%, rgba(56, 189, 248, 0.12), transparent),
-          radial-gradient(ellipse 60% 50% at 50% 90%, rgba(129, 140, 248, 0.09), transparent);
+          radial-gradient(ellipse 70% 50% at 50% 18%, var(--sp-wash-1), transparent),
+          radial-gradient(ellipse 60% 45% at 50% 92%, var(--sp-wash-2), transparent);
         transition:
-          opacity 480ms ease,
-          visibility 480ms ease;
+          opacity 560ms cubic-bezier(0.4, 0, 0.2, 1),
+          transform 560ms cubic-bezier(0.4, 0, 0.2, 1),
+          filter 560ms cubic-bezier(0.4, 0, 0.2, 1),
+          visibility 560ms;
+      }
+
+      /* A very slow sweep of light behind everything: enough to make the screen
+         feel alive without reading as an animation. */
+      #splash::before {
+        content: '';
+        position: absolute;
+        inset: -40%;
+        background: conic-gradient(
+          from 0deg,
+          transparent 0deg 120deg,
+          var(--sp-wash-1) 190deg,
+          transparent 260deg 360deg
+        );
+        filter: blur(60px);
+        opacity: 0.7;
+        animation: splash-sweep 18s linear infinite;
+      }
+
+      /* Vignette, so the corners fall away and the centre reads as the subject. */
+      #splash::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse 60% 60% at 50% 50%, transparent 40%, rgba(0, 0, 0, 0.6));
       }
 
       #splash.is-hidden {
         opacity: 0;
         visibility: hidden;
+        transform: scale(1.04);
+        filter: blur(8px);
         pointer-events: none;
       }
 
@@ -50,66 +89,196 @@
         overflow: hidden;
       }
 
-      .splash-atom {
+      .splash-stage {
         position: relative;
-        width: 132px;
-        height: 132px;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2.25rem;
+        padding: 0 1.5rem;
       }
 
-      .splash-nucleus {
+      /* ---------------------------------------------------------------- atom */
+
+      .splash-atom {
+        position: relative;
+        width: 168px;
+        height: 168px;
+        perspective: 620px;
+        transform-style: preserve-3d;
+        animation: splash-rise 800ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+
+      .splash-halo {
+        position: absolute;
+        inset: -28%;
+        border-radius: 50%;
+        background: radial-gradient(circle, var(--sp-wash-1), transparent 62%);
+        animation: splash-breathe 4.5s ease-in-out infinite;
+      }
+
+      .splash-core {
         position: absolute;
         top: 50%;
         left: 50%;
-        width: 18px;
-        height: 18px;
-        margin: -9px 0 0 -9px;
+        width: 20px;
+        height: 20px;
+        margin: -10px 0 0 -10px;
         border-radius: 50%;
-        background: radial-gradient(circle at 35% 32%, #ffffff, #67e8f9 55%, #0891b2);
-        box-shadow: 0 0 18px rgba(103, 232, 249, 0.85);
-        animation: splash-pulse 2.4s ease-in-out infinite;
+        background: radial-gradient(circle at 34% 30%, #ffffff, var(--sp-accent) 58%, rgba(0, 0, 0, 0.35));
+        box-shadow: 0 0 20px var(--sp-accent);
+        animation: splash-pulse 2.6s ease-in-out infinite;
       }
 
-      .splash-ring {
+      /*
+        Each shell is a circle tilted out of the screen plane, so the electron
+        riding it traces a real ellipse rather than a flat ring. The tilt lives on
+        the shell; the spin lives on a child, which keeps the two transforms from
+        fighting over the same property.
+      */
+      .splash-shell {
         position: absolute;
         border-radius: 50%;
         border: 1px solid currentColor;
-        opacity: 0.4;
+        opacity: 0.55;
+        box-shadow: 0 0 14px -6px currentColor;
+        transform-style: preserve-3d;
+      }
+
+      .splash-spin {
+        position: absolute;
+        inset: -1px;
+        border-radius: 50%;
         animation: splash-orbit linear infinite;
       }
 
-      /* Each electron rides the top of its ring; rotating the ring orbits it. */
-      .splash-ring i {
+      .splash-spin i {
         position: absolute;
         top: -4px;
         left: 50%;
-        width: 7px;
-        height: 7px;
-        margin-left: -3.5px;
+        width: 8px;
+        height: 8px;
+        margin-left: -4px;
         border-radius: 50%;
         background: currentColor;
-        box-shadow: 0 0 9px currentColor;
-        opacity: 1;
+        box-shadow:
+          0 0 12px currentColor,
+          0 0 3px #fff;
       }
 
-      /* Inner shells orbit faster and alternate direction, matching the 3D model. */
-      .splash-ring-1 {
-        inset: 36px;
-        color: #5eead4;
-        animation-duration: 1.7s;
+      .splash-shell-1 {
+        inset: 46px;
+        color: var(--sp-ring-1);
+        transform: rotateX(72deg);
       }
-      .splash-ring-2 {
-        inset: 18px;
-        color: #7dd3fc;
-        animation-duration: 2.5s;
+      .splash-shell-1 .splash-spin {
+        animation-duration: 1.9s;
+      }
+
+      .splash-shell-2 {
+        inset: 23px;
+        color: var(--sp-ring-2);
+        transform: rotateX(72deg) rotateY(62deg);
+      }
+      .splash-shell-2 .splash-spin {
+        animation-duration: 2.8s;
         animation-direction: reverse;
       }
-      .splash-ring-3 {
+
+      .splash-shell-3 {
         inset: 0;
-        color: #818cf8;
-        animation-duration: 3.4s;
+        color: var(--sp-ring-3);
+        transform: rotateX(72deg) rotateY(124deg);
+      }
+      .splash-shell-3 .splash-spin {
+        animation-duration: 3.9s;
       }
 
+      /* ------------------------------------------------------------ wordmark */
+
+      .splash-word {
+        text-align: center;
+        font-family:
+          ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans CJK SC',
+          'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      }
+
+      .splash-mark {
+        font-size: 0.6rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        color: var(--sp-accent);
+        opacity: 0.75;
+        animation: splash-track 1100ms cubic-bezier(0.16, 1, 0.3, 1) 120ms both;
+      }
+
+      .splash-rule {
+        width: 0;
+        height: 1px;
+        margin: 0.75rem auto;
+        background: linear-gradient(90deg, transparent, var(--sp-accent), transparent);
+        opacity: 0.5;
+        animation: splash-rule 900ms cubic-bezier(0.16, 1, 0.3, 1) 320ms both;
+      }
+
+      .splash-title {
+        font-size: 1.4rem;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        color: #f8fafc;
+        animation: splash-rise 700ms cubic-bezier(0.16, 1, 0.3, 1) 380ms both;
+      }
+
+      .splash-subtitle {
+        margin-top: 0.5rem;
+        font-size: 0.7rem;
+        letter-spacing: 0.16em;
+        color: #64748b;
+        animation: splash-rise 700ms cubic-bezier(0.16, 1, 0.3, 1) 480ms both;
+      }
+
+      /* ------------------------------------------------------------ progress */
+
+      .splash-bar {
+        position: relative;
+        width: 180px;
+        height: 2px;
+        border-radius: 2px;
+        overflow: hidden;
+        background: rgba(148, 163, 184, 0.14);
+        animation: splash-fade 700ms ease 620ms both;
+      }
+
+      .splash-bar span {
+        display: block;
+        height: 100%;
+        width: 0;
+        border-radius: 2px;
+        background: linear-gradient(90deg, var(--sp-ring-1), var(--sp-ring-2), var(--sp-ring-3));
+        /* Duration is set from JS so the bar and the minimum wait cannot drift. */
+        animation: splash-fill var(--splash-duration, 2200ms) cubic-bezier(0.3, 0, 0.2, 1) forwards;
+      }
+
+      /* A highlight that runs along the track, ahead of the fill. */
+      .splash-bar::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+        transform: translateX(-100%);
+        animation: splash-sheen 1.6s ease-in-out infinite;
+      }
+
+      /* ---------------------------------------------------------- animations */
+
       @keyframes splash-orbit {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes splash-sweep {
         to {
           transform: rotate(360deg);
         }
@@ -118,50 +287,63 @@
       @keyframes splash-pulse {
         0%,
         100% {
-          box-shadow: 0 0 18px rgba(103, 232, 249, 0.85);
+          box-shadow: 0 0 18px var(--sp-accent);
         }
         50% {
-          box-shadow: 0 0 30px rgba(103, 232, 249, 1);
+          box-shadow: 0 0 34px var(--sp-accent);
         }
       }
 
-      .splash-text {
-        text-align: center;
-        font-family:
-          ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans CJK SC',
-          'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      @keyframes splash-breathe {
+        0%,
+        100% {
+          opacity: 0.55;
+          transform: scale(0.94);
+        }
+        50% {
+          opacity: 0.9;
+          transform: scale(1.04);
+        }
       }
 
-      .splash-title {
-        font-size: 1.05rem;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        color: #f1f5f9;
+      @keyframes splash-rise {
+        from {
+          opacity: 0;
+          transform: translateY(10px) scale(0.96);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
       }
 
-      .splash-subtitle {
-        margin-top: 0.35rem;
-        font-size: 0.7rem;
-        letter-spacing: 0.06em;
-        color: #64748b;
+      @keyframes splash-track {
+        from {
+          opacity: 0;
+          letter-spacing: 0.62em;
+        }
+        to {
+          opacity: 0.75;
+          letter-spacing: 0.34em;
+        }
       }
 
-      .splash-bar {
-        width: 160px;
-        height: 2px;
-        border-radius: 2px;
-        overflow: hidden;
-        background: rgba(148, 163, 184, 0.16);
+      @keyframes splash-rule {
+        from {
+          width: 0;
+        }
+        to {
+          width: 56px;
+        }
       }
 
-      .splash-bar span {
-        display: block;
-        height: 100%;
-        width: 0;
-        border-radius: 2px;
-        background: linear-gradient(90deg, #5eead4, #7dd3fc, #818cf8);
-        /* Duration is set from JS so the bar and the minimum wait cannot drift. */
-        animation: splash-fill var(--splash-duration, 2200ms) ease-out forwards;
+      @keyframes splash-fade {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
       }
 
       @keyframes splash-fill {
@@ -170,10 +352,31 @@
         }
       }
 
+      @keyframes splash-sheen {
+        0% {
+          transform: translateX(-100%);
+        }
+        60%,
+        100% {
+          transform: translateX(100%);
+        }
+      }
+
       @media (prefers-reduced-motion: reduce) {
-        .splash-ring,
-        .splash-nucleus {
+        #splash::before,
+        .splash-spin,
+        .splash-core,
+        .splash-halo,
+        .splash-bar::after {
           animation: none;
+        }
+        .splash-atom,
+        .splash-mark,
+        .splash-rule,
+        .splash-title,
+        .splash-subtitle,
+        .splash-bar {
+          animation-duration: 1ms;
         }
         .splash-bar span {
           animation-duration: 1ms;
@@ -185,17 +388,24 @@
     <div id="root"></div>
 
     <div id="splash" role="status" aria-live="polite" aria-label="Loading">
-      <div class="splash-atom" aria-hidden="true">
-        <span class="splash-ring splash-ring-3"><i></i></span>
-        <span class="splash-ring splash-ring-2"><i></i></span>
-        <span class="splash-ring splash-ring-1"><i></i></span>
-        <span class="splash-nucleus"></span>
+      <div class="splash-stage">
+        <div class="splash-atom" aria-hidden="true">
+          <span class="splash-halo"></span>
+          <span class="splash-shell splash-shell-3"><span class="splash-spin"><i></i></span></span>
+          <span class="splash-shell splash-shell-2"><span class="splash-spin"><i></i></span></span>
+          <span class="splash-shell splash-shell-1"><span class="splash-spin"><i></i></span></span>
+          <span class="splash-core"></span>
+        </div>
+
+        <div class="splash-word">
+          <div class="splash-mark">Elementum</div>
+          <div class="splash-rule"></div>
+          <div class="splash-title" id="splash-title">元素周期表</div>
+          <div class="splash-subtitle" id="splash-subtitle">3D 交互式原子结构</div>
+        </div>
+
+        <div class="splash-bar"><span></span></div>
       </div>
-      <div class="splash-text">
-        <div class="splash-title" id="splash-title">元素周期表</div>
-        <div class="splash-subtitle" id="splash-subtitle">3D 交互式原子结构</div>
-      </div>
-      <div class="splash-bar"><span></span></div>
     </div>
 
     <script>
@@ -219,25 +429,59 @@
           // Matches the CSS transition, then drops the node entirely.
           setTimeout(function () {
             el.remove()
-          }, 520)
+          }, 600)
         }
 
         // Failsafe: if the bundle never boots, do not trap the user behind the
         // splash forever.
         setTimeout(window.__hideSplash, 8000)
 
-        // The locale is persisted before React loads, so the splash can already be
-        // in the right language instead of flashing Chinese at English users.
+        // Palettes mirror [data-theme] in src/index.css. Keeping them here means
+        // the first painted frame is already in the user's theme.
+        var THEMES = {
+          cyan: ['#05080f', '#67e8f9', '#5eead4', '#7dd3fc', '#818cf8', 'rgba(56,189,248,.13)', 'rgba(129,140,248,.1)'],
+          violet: ['#07060f', '#c4b5fd', '#a78bfa', '#c4b5fd', '#f0abfc', 'rgba(139,92,246,.15)', 'rgba(236,72,153,.09)'],
+          emerald: ['#04090c', '#6ee7b7', '#34d399', '#5eead4', '#a7f3d0', 'rgba(16,185,129,.14)', 'rgba(45,212,191,.09)'],
+          amber: ['#0a0803', '#fcd34d', '#fbbf24', '#fdba74', '#fca5a5', 'rgba(245,158,11,.13)', 'rgba(249,115,22,.09)'],
+          rose: ['#0b0609', '#fda4af', '#fb7185', '#f0abfc', '#c4b5fd', 'rgba(244,63,94,.13)', 'rgba(217,70,239,.09)'],
+          graphite: ['#07080a', '#cbd5e1', '#94a3b8', '#cbd5e1', '#e2e8f0', 'rgba(148,163,184,.11)', 'rgba(100,116,139,.08)'],
+        }
+        var VARS = [
+          '--sp-surface',
+          '--sp-accent',
+          '--sp-ring-1',
+          '--sp-ring-2',
+          '--sp-ring-3',
+          '--sp-wash-1',
+          '--sp-wash-2',
+        ]
+
+        // Locale and theme are persisted before React loads, so the splash can
+        // already be in the right language and palette rather than flashing the
+        // defaults at everyone.
         try {
           var saved = JSON.parse(localStorage.getItem('elementum-prefs') || '{}')
-          if (saved && saved.state && saved.state.locale === 'en') {
+          var state = (saved && saved.state) || {}
+
+          if (state.locale === 'en') {
             document.documentElement.lang = 'en'
             document.getElementById('splash-title').textContent = 'Periodic Table'
             document.getElementById('splash-subtitle').textContent =
               '3D Interactive Atomic Structure'
           }
+
+          var palette = THEMES[state.theme]
+          if (palette) {
+            var splash = document.getElementById('splash')
+            for (var i = 0; i < VARS.length; i++) {
+              splash.style.setProperty(VARS[i], palette[i])
+            }
+            document.documentElement.dataset.theme = state.theme
+            var meta = document.querySelector('meta[name="theme-color"]')
+            if (meta) meta.setAttribute('content', palette[0])
+          }
         } catch (e) {
-          /* localStorage can throw in private mode; the Chinese default is fine. */
+          /* localStorage can throw in private mode; the defaults are fine. */
         }
       })()
     </script>

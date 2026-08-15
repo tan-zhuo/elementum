@@ -15,7 +15,7 @@ export function ViewerButton({ active, onClick, children, title }: ViewerButtonP
       aria-pressed={active}
       className={`rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${
         active
-          ? 'border-cyan-400/60 bg-cyan-400/15 text-cyan-200'
+          ? 'accent-active'
           : 'border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/25 hover:text-slate-200'
       }`}
     >

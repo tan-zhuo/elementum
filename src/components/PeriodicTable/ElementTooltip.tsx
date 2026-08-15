@@ -53,7 +53,7 @@ export function ElementTooltip({ element, anchor, locale }: ElementTooltipProps)
         // Hidden until measured so it never flashes in the top-left corner.
         visibility: pos ? 'visible' : 'hidden',
       }}
-      className="pointer-events-none fixed z-40 w-56 rounded-lg border bg-[#080d18]/95 p-3 shadow-2xl backdrop-blur-sm"
+      className="surface-raised-veil pointer-events-none fixed z-40 w-56 rounded-lg border p-3 shadow-2xl backdrop-blur-sm"
     >
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-xl font-semibold" style={{ color }}>

@@ -36,7 +36,7 @@ export function ComparePanel() {
   return (
     <aside
       aria-label={t('compareTitle')}
-      className="fixed bottom-3 left-1/2 z-30 w-[min(46rem,calc(100vw-1.5rem))] -translate-x-1/2 rounded-xl border border-white/12 bg-[#080d18]/95 shadow-2xl backdrop-blur"
+      className="surface-raised-veil fixed bottom-3 left-1/2 z-30 w-[min(46rem,calc(100vw-1.5rem))] -translate-x-1/2 rounded-xl border border-white/12 shadow-2xl backdrop-blur"
     >
       <div className="flex items-center justify-between gap-2 border-b border-white/8 px-3 py-2">
         <h2 className="text-xs font-semibold text-slate-300">
@@ -140,7 +140,7 @@ export function ComparePanel() {
                 {elements.map((el) => (
                   <td
                     key={el.number}
-                    className="px-1 py-1.5 text-center font-mono text-[10px] text-cyan-300"
+                    className="accent-text px-1 py-1.5 text-center font-mono text-[10px]"
                   >
                     {el.electronConfigurationShort}
                   </td>

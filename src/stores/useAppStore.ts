@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { CategoryKey, HeatmapKey, Locale } from '../types/element'
 import type { MoleculeCategory, MoleculeStyle } from '../types/molecule'
+import { DEFAULT_THEME, type ThemeKey } from '../data/themes'
 
 /** Top-level section of the app. */
 export type View = 'elements' | 'molecules'
@@ -10,6 +11,8 @@ export const MAX_COMPARE = 3
 
 interface AppState {
   locale: Locale
+  /** Accent theme, applied as `data-theme` on <html>. */
+  theme: ThemeKey
   /** Which top-level section is showing. */
   view: View
   /** Id of the molecule whose detail panel is open, or null. */
@@ -40,6 +43,7 @@ interface AppState {
   viewerFullscreen: boolean
 
   setLocale: (locale: Locale) => void
+  setTheme: (theme: ThemeKey) => void
   toggleLocale: () => void
   setView: (view: View) => void
   selectMolecule: (id: string | null) => void
@@ -63,6 +67,7 @@ export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       locale: 'zh',
+      theme: DEFAULT_THEME,
       view: 'elements',
       selectedMolecule: null,
       selected: null,
@@ -79,6 +84,7 @@ export const useAppStore = create<AppState>()(
       viewerFullscreen: false,
 
       setLocale: (locale) => set({ locale }),
+      setTheme: (theme) => set({ theme }),
       toggleLocale: () => set((s) => ({ locale: s.locale === 'zh' ? 'en' : 'zh' })),
 
       // Switching sections closes whatever detail panel was open, so the drawer
@@ -149,6 +155,7 @@ export const useAppStore = create<AppState>()(
       // Only preferences persist. Selection and filters are per-visit state.
       partialize: (s) => ({
         locale: s.locale,
+        theme: s.theme,
         autoRotate: s.autoRotate,
         animateElectrons: s.animateElectrons,
         showCloud: s.showCloud,
