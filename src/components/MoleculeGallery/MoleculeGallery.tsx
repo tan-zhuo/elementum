@@ -1,15 +1,13 @@
 import { useMemo } from 'react'
-import type { Molecule, MoleculeCategory } from '../../types/molecule'
+import type { Molecule } from '../../types/molecule'
 import {
-  MOLECULES,
   MOLECULE_CATEGORY_COLORS,
   MOLECULE_CATEGORY_LABELS,
-  MOLECULE_CATEGORY_ORDER,
   atomColor,
   composition,
+  groupedMolecules,
   moleculeName,
   moleculeShape,
-  searchMolecules,
 } from '../../data/molecules'
 import { useAppStore } from '../../stores/useAppStore'
 import { translate } from '../../i18n'
@@ -70,18 +68,12 @@ export function MoleculeGallery() {
   const activeCategories = useAppStore((s) => s.activeMoleculeCategories)
   const selectMolecule = useAppStore((s) => s.selectMolecule)
 
-  const matches = useMemo(() => new Set(searchMolecules(query)), [query])
-
-  const grouped = useMemo(() => {
-    const categories =
-      activeCategories.length > 0 ? activeCategories : MOLECULE_CATEGORY_ORDER
-    return MOLECULE_CATEGORY_ORDER.filter((c) => categories.includes(c))
-      .map((category) => ({
-        category,
-        items: MOLECULES.filter((m) => m.category === category && matches.has(m.id)),
-      }))
-      .filter((group) => group.items.length > 0)
-  }, [matches, activeCategories])
+  // Same helper the detail panel steps through, so the gallery and the arrows
+  // (and autoplay) can never disagree about what is on screen.
+  const grouped = useMemo(
+    () => groupedMolecules(query, activeCategories),
+    [query, activeCategories],
+  )
 
   if (grouped.length === 0) {
     return (
@@ -99,9 +91,9 @@ export function MoleculeGallery() {
             <span
               aria-hidden
               className="h-2 w-2 rounded-full"
-              style={{ backgroundColor: MOLECULE_CATEGORY_COLORS[category as MoleculeCategory] }}
+              style={{ backgroundColor: MOLECULE_CATEGORY_COLORS[category] }}
             />
-            {MOLECULE_CATEGORY_LABELS[category as MoleculeCategory][locale]}
+            {MOLECULE_CATEGORY_LABELS[category][locale]}
             <span className="text-slate-600">({items.length})</span>
           </h2>
 

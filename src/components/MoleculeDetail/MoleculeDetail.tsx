@@ -13,9 +13,10 @@ import {
   moleculeShape,
   moleculeSummary,
   moleculeUses,
+  visibleMoleculeIds,
 } from '../../data/molecules'
 import { getElementBySymbol } from '../../data/elements'
-import { useAppStore } from '../../stores/useAppStore'
+import { AUTOPLAY_INTERVAL_MS, useAppStore } from '../../stores/useAppStore'
 import { translate } from '../../i18n'
 import { withAlpha } from '../../lib/color'
 import { UsesSection } from '../UsesSection/UsesSection'
@@ -51,6 +52,10 @@ export function MoleculeDetail({ molecule }: { molecule: Molecule }) {
   const select = useAppStore((s) => s.select)
   const setView = useAppStore((s) => s.setView)
   const viewerFullscreen = useAppStore((s) => s.viewerFullscreen)
+  const query = useAppStore((s) => s.query)
+  const activeCategories = useAppStore((s) => s.activeMoleculeCategories)
+  const autoplay = useAppStore((s) => s.autoplay)
+  const setAutoplay = useAppStore((s) => s.setAutoplay)
 
   const t = useCallback((key: Parameters<typeof translate>[0]) => translate(key, locale), [locale])
 
@@ -58,14 +63,32 @@ export function MoleculeDetail({ molecule }: { molecule: Molecule }) {
   const elements = useMemo(() => composition(molecule), [molecule])
   const bonds = useMemo(() => bondSummary(molecule), [molecule])
 
-  const index = MOLECULES.findIndex((m) => m.id === molecule.id)
+  // The panel walks whatever the gallery is showing. If the open molecule has
+  // been filtered out from under it, fall back to the full list so the arrows
+  // still lead somewhere.
+  const sequence = useMemo(() => {
+    const visible = visibleMoleculeIds(query, activeCategories)
+    return visible.includes(molecule.id) ? visible : MOLECULES.map((m) => m.id)
+  }, [query, activeCategories, molecule.id])
+
+  const index = sequence.indexOf(molecule.id)
   const step = useCallback(
-    (delta: number) => {
-      const next = MOLECULES[index + delta]
-      if (next) selectMolecule(next.id)
+    (delta: number, wrap = false) => {
+      if (index < 0) return
+      const target = wrap ? (index + delta + sequence.length) % sequence.length : index + delta
+      const next = sequence[target]
+      if (next) selectMolecule(next)
     },
-    [index, selectMolecule],
+    [index, sequence, selectMolecule],
   )
+
+  // Autoplay's timer restarts with every molecule, so stepping by hand also
+  // resets the countdown instead of cutting the next one short.
+  useEffect(() => {
+    if (!autoplay) return
+    const timer = setTimeout(() => step(1, true), AUTOPLAY_INTERVAL_MS)
+    return () => clearTimeout(timer)
+  }, [autoplay, molecule.id, step])
 
   // Same contract as the element panel: Escape closes, arrows walk the list, and
   // both defer while the 3D viewer is maximised.
@@ -82,11 +105,13 @@ export function MoleculeDetail({ molecule }: { molecule: Molecule }) {
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault()
         step(-1)
+      } else if (event.key === 'p' || event.key === 'P') {
+        setAutoplay(!autoplay)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [selectMolecule, step, viewerFullscreen])
+  }, [autoplay, selectMolecule, setAutoplay, step, viewerFullscreen])
 
   /** Jumps to this element's page in the periodic table. */
   const openElement = (symbol: string) => {
@@ -136,6 +161,26 @@ export function MoleculeDetail({ molecule }: { molecule: Molecule }) {
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
+            onClick={() => setAutoplay(!autoplay)}
+            aria-pressed={autoplay}
+            aria-label={autoplay ? t('autoplayStop') : t('autoplayStart')}
+            title={t('autoplayHint')}
+            className={`mr-1 rounded-md border px-2 py-1 transition-colors ${
+              autoplay
+                ? 'accent-active'
+                : 'border-white/10 text-slate-400 hover:border-white/30 hover:text-slate-100'
+            }`}
+          >
+            <svg aria-hidden viewBox="0 0 12 12" className="h-3 w-3" fill="currentColor">
+              {autoplay ? (
+                <path d="M3 2h2.2v8H3zM6.8 2H9v8H6.8z" />
+              ) : (
+                <path d="M3.2 1.8 10 6l-6.8 4.2z" />
+              )}
+            </svg>
+          </button>
+          <button
+            type="button"
             onClick={() => step(-1)}
             disabled={index <= 0}
             aria-label={t('previousItem')}
@@ -146,7 +191,7 @@ export function MoleculeDetail({ molecule }: { molecule: Molecule }) {
           <button
             type="button"
             onClick={() => step(1)}
-            disabled={index >= MOLECULES.length - 1}
+            disabled={index >= sequence.length - 1}
             aria-label={t('nextItem')}
             className="rounded-md border border-white/10 px-2 py-1 text-slate-400 transition-colors hover:border-white/30 hover:text-slate-100 disabled:opacity-30 disabled:hover:border-white/10"
           >
@@ -254,7 +299,7 @@ export function MoleculeDetail({ molecule }: { molecule: Molecule }) {
             <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
               {t('moleculeStructure')}
             </h3>
-            <span className="text-[10px] text-slate-600">{t('keyboardHints')}</span>
+            <span className="text-[10px] text-slate-600">{t('keyboardHintsMolecule')}</span>
           </div>
           <div className="h-[24rem] lg:h-[calc(100%-1.75rem)]">
             <Suspense

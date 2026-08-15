@@ -113,6 +113,33 @@ function score(m: Molecule, query: string): number {
   return 0
 }
 
+/**
+ * The gallery's grouping: categories in canonical order, each with the molecules
+ * that survive the current search and category filter.
+ *
+ * Shared with the detail panel so that stepping through molecules — by arrow key
+ * or by autoplay — walks exactly what the gallery is showing, rather than the
+ * full list behind the filter.
+ */
+export function groupedMolecules(
+  query: string,
+  categories: MoleculeCategory[],
+): { category: MoleculeCategory; items: Molecule[] }[] {
+  const matches = new Set(searchMolecules(query))
+  const wanted = categories.length > 0 ? categories : MOLECULE_CATEGORY_ORDER
+  return MOLECULE_CATEGORY_ORDER.filter((c) => wanted.includes(c))
+    .map((category) => ({
+      category,
+      items: MOLECULES.filter((m) => m.category === category && matches.has(m.id)),
+    }))
+    .filter((group) => group.items.length > 0)
+}
+
+/** The same molecules, flattened to ids in display order. */
+export function visibleMoleculeIds(query: string, categories: MoleculeCategory[]): string[] {
+  return groupedMolecules(query, categories).flatMap((group) => group.items.map((m) => m.id))
+}
+
 /** Molecule ids matching `query`, best match first. Empty query matches everything. */
 export function searchMolecules(query: string): string[] {
   if (!query.trim()) return MOLECULES.map((m) => m.id)

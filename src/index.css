@@ -145,6 +145,23 @@
   box-shadow: 0 0 10px var(--accent-glow);
 }
 
+/* Autoplay countdown. The duration comes from the same constant that drives the
+   timer (set on <html> at startup), so the bar cannot drift out of step. */
+.autoplay-progress {
+  transform-origin: left center;
+  background-color: var(--accent);
+  animation: autoplay-progress var(--autoplay-duration, 6000ms) linear forwards;
+}
+
+@keyframes autoplay-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
 /* Translucent versions of the themed surfaces, for sticky chrome and popovers.
    Written as color-mix rather than a Tailwind opacity modifier because the base
    colour is a variable. */

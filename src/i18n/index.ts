@@ -95,6 +95,10 @@ const STRINGS = {
   },
   previousItem: { zh: '上一个', en: 'Previous' },
   nextItem: { zh: '下一个', en: 'Next' },
+  keyboardHintsMolecule: {
+    zh: '← → 切换 · P 播放 · Esc 关闭',
+    en: '← → to switch · P to play · Esc to close',
+  },
   // Molecules
   viewElements: { zh: '元素周期表', en: 'Periodic table' },
   viewMolecules: { zh: '分子', en: 'Molecules' },
@@ -129,6 +133,18 @@ const STRINGS = {
 
   // Theme
   theme: { zh: '主题配色', en: 'Theme' },
+
+  // Fullscreen and autoplay
+  // Distinct from the 3D viewer's own fullscreen, which only maximises the canvas.
+  enterPageFullscreen: { zh: '整页全屏', en: 'Fullscreen page' },
+  exitPageFullscreen: { zh: '退出整页全屏', en: 'Exit fullscreen page' },
+  autoplay: { zh: '自动播放', en: 'Autoplay' },
+  autoplayStart: { zh: '自动播放', en: 'Play all' },
+  autoplayStop: { zh: '停止播放', en: 'Stop' },
+  autoplayHint: {
+    zh: '每 6 秒切换到下一个分子',
+    en: 'Advances to the next molecule every 6 seconds',
+  },
 
   // Footer
   blog: { zh: '博客', en: 'Blog' },

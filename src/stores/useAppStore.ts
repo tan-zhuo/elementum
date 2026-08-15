@@ -9,6 +9,12 @@ export type View = 'elements' | 'molecules'
 
 export const MAX_COMPARE = 3
 
+/**
+ * How long each molecule holds the screen during autoplay. Exported so the
+ * progress bar's CSS animation is driven by the same number as the timer.
+ */
+export const AUTOPLAY_INTERVAL_MS = 6000
+
 interface AppState {
   locale: Locale
   /** Accent theme, applied as `data-theme` on <html>. */
@@ -28,6 +34,8 @@ interface AppState {
   heatmap: HeatmapKey | null
   /** Atomic numbers queued for side-by-side comparison, max `MAX_COMPARE`. */
   compare: number[]
+  /** Walks the visible molecules on a timer, for hands-off presentation. */
+  autoplay: boolean
 
   // 3D viewer preferences, persisted so they survive a reload.
   autoRotate: boolean
@@ -61,6 +69,7 @@ interface AppState {
   setMoleculeStyle: (value: MoleculeStyle) => void
   setMoleculeLabels: (value: boolean) => void
   setViewerFullscreen: (value: boolean) => void
+  setAutoplay: (value: boolean) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -76,6 +85,7 @@ export const useAppStore = create<AppState>()(
       activeMoleculeCategories: [],
       heatmap: null,
       compare: [],
+      autoplay: false,
       autoRotate: true,
       animateElectrons: true,
       showCloud: false,
@@ -97,15 +107,17 @@ export const useAppStore = create<AppState>()(
           selected: null,
           selectedMolecule: null,
           viewerFullscreen: false,
+          autoplay: false,
           query: '',
           activeCategories: [],
           activeMoleculeCategories: [],
         }),
 
+      // Closing the panel also stops autoplay: there is nothing left to advance.
       selectMolecule: (selectedMolecule) =>
         set(
           selectedMolecule === null
-            ? { selectedMolecule, viewerFullscreen: false }
+            ? { selectedMolecule, viewerFullscreen: false, autoplay: false }
             : { selectedMolecule },
         ),
       // Closing the panel must also drop out of fullscreen, or the maximised viewer
@@ -149,6 +161,7 @@ export const useAppStore = create<AppState>()(
       setMoleculeStyle: (moleculeStyle) => set({ moleculeStyle }),
       setMoleculeLabels: (moleculeLabels) => set({ moleculeLabels }),
       setViewerFullscreen: (viewerFullscreen) => set({ viewerFullscreen }),
+      setAutoplay: (autoplay) => set({ autoplay }),
     }),
     {
       name: 'elementum-prefs',

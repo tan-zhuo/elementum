@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { Canvas } from '@react-three/fiber'
 import type { Element } from '../../types/element'
 import { SHELL_COLORS, SHELL_LABELS } from '../../data/categories'
@@ -147,5 +146,11 @@ export function AtomModel({ element }: AtomModelProps) {
 
   // Portalled to the body so the fixed overlay is never trapped by an ancestor's
   // transform or overflow.
-  return fullscreen ? createPortal(viewer, document.body) : viewer
+  // Deliberately NOT portalled: moving the canvas between two parents unmounts it,
+  // which throws away the WebGL context on every fullscreen toggle — and remounting
+  // it from a fullscreenchange handler (Esc) made react-three-fiber reconnect to a
+  // detached node and throw. Going fullscreen is a class swap on the node that is
+  // already there; the detail panel is the topmost stacking context, so a fixed,
+  // z-50 child of it still covers the page.
+  return viewer
 }

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { Canvas } from '@react-three/fiber'
 import type { Molecule, MoleculeStyle } from '../../types/molecule'
 import { atomColor, composition } from '../../data/molecules'
@@ -27,6 +26,8 @@ export function MoleculeModel({ molecule }: { molecule: Molecule }) {
   const setShowLabels = useAppStore((s) => s.setMoleculeLabels)
   const autoRotate = useAppStore((s) => s.autoRotate)
   const setAutoRotate = useAppStore((s) => s.setAutoRotate)
+  const autoplay = useAppStore((s) => s.autoplay)
+  const setAutoplay = useAppStore((s) => s.setAutoplay)
   const fullscreen = useAppStore((s) => s.viewerFullscreen)
   const setFullscreen = useAppStore((s) => s.setViewerFullscreen)
 
@@ -69,6 +70,14 @@ export function MoleculeModel({ molecule }: { molecule: Molecule }) {
       }
     >
       <div className="relative flex-1">
+        {/* Autoplay countdown, visible in both the panel and fullscreen. Keyed by
+            molecule so the bar restarts with each one. */}
+        {autoplay && (
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden">
+            <div key={molecule.id} className="autoplay-progress h-full w-full" />
+          </div>
+        )}
+
         <Canvas
           camera={{ position: orbitPosition(distance), fov: CAMERA_FOV }}
           dpr={[1, 2]}
@@ -129,6 +138,9 @@ export function MoleculeModel({ molecule }: { molecule: Molecule }) {
         <ViewerButton active={autoRotate} onClick={() => setAutoRotate(!autoRotate)}>
           {t('autoRotate')}
         </ViewerButton>
+        <ViewerButton active={autoplay} onClick={() => setAutoplay(!autoplay)}>
+          {t('autoplay')}
+        </ViewerButton>
         <ViewerButton active={false} onClick={() => setResetToken((n) => n + 1)}>
           {t('resetView')}
         </ViewerButton>
@@ -139,5 +151,11 @@ export function MoleculeModel({ molecule }: { molecule: Molecule }) {
     </div>
   )
 
-  return fullscreen ? createPortal(viewer, document.body) : viewer
+  // Deliberately NOT portalled: moving the canvas between two parents unmounts it,
+  // which throws away the WebGL context on every fullscreen toggle — and remounting
+  // it from a fullscreenchange handler (Esc) made react-three-fiber reconnect to a
+  // detached node and throw. Going fullscreen is a class swap on the node that is
+  // already there; the detail panel is the topmost stacking context, so a fixed,
+  // z-50 child of it still covers the page.
+  return viewer
 }
