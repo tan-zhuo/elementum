@@ -271,6 +271,11 @@ function rotateOnto(p, from, to, origin) {
   return rotateAbout(p, axis, origin, Math.acos(Math.min(1, Math.max(-1, dot(a, b)))) / DEG)
 }
 
+/** A point at `distance` from `from`, in the direction of `target`. */
+function towards(from, target, distance) {
+  return add(from, mul(norm(sub(target, from)), distance))
+}
+
 /** Places atoms along the given unit directions at `distance` from `center`. */
 function place(center, directions, distance) {
   return directions.map((d) => add(center, mul(norm(d), distance)))
@@ -468,6 +473,210 @@ const RADII = {
   Br: { covalent: 1.2, vdw: 1.85 },
   I: { covalent: 1.39, vdw: 1.98 },
   Xe: { covalent: 1.4, vdw: 2.16 },
+}
+
+// --------------------------------------------------------------- amino acids
+
+/** Bond lengths shared by every amino acid backbone, in angstroms. */
+const AA = {
+  cc: 1.52,
+  cb: 1.53,
+  co: 1.21,
+  coh: 1.34,
+  cn: 1.47,
+  oh: 0.97,
+  ch: 1.09,
+  nh: 1.01,
+}
+
+/**
+ * The backbone all twenty amino acids share: a carboxyl, the alpha carbon with its
+ * amino group and hydrogen, and one free tetrahedral direction for the side chain.
+ * Seventeen of them differ only in what hangs off that direction, so they are built
+ * by attaching to this rather than by repeating it.
+ *
+ * Atom order is fixed: 0 carboxyl C, 1 alpha C, 2 carbonyl O, 3 acid O, 4 acid H,
+ * 5 N, 6 alpha H, 7 and 8 amine H. Side chains start at index 9.
+ */
+function aminoAcidBackbone() {
+  const normal = [0, 0, 1]
+  const carboxyl = [0, 0, 0]
+  const alpha = [-AA.cc, 0, 0]
+  const oDouble = inPlane(carboxyl, alpha, 125, AA.co, normal, 1)
+  const oAcid = inPlane(carboxyl, alpha, 112, AA.coh, normal, -1)
+  const [nDirection, sideDirection, hDirection] = coneDirections(
+    sub(alpha, carboxyl),
+    3,
+    TETRAHEDRAL_CONE,
+    0,
+  )
+  const nitrogen = add(alpha, mul(nDirection, AA.cn))
+  const atoms = [
+    { element: 'C', position: carboxyl },
+    { element: 'C', position: alpha },
+    { element: 'O', position: oDouble },
+    { element: 'O', position: oAcid },
+    { element: 'H', position: inPlane(oAcid, carboxyl, 107, AA.oh, normal, 1) },
+    { element: 'N', position: nitrogen },
+    { element: 'H', position: add(alpha, mul(hDirection, AA.ch)) },
+  ]
+  const bonds = [
+    { a: 0, b: 1, order: 1, length: AA.cc },
+    { a: 0, b: 2, order: 2, length: AA.co },
+    { a: 0, b: 3, order: 1, length: AA.coh },
+    { a: 3, b: 4, order: 1, length: AA.oh },
+    { a: 1, b: 5, order: 1, length: AA.cn },
+    { a: 1, b: 6, order: 1, length: AA.ch },
+  ]
+  const push = (element, position, from, length, order = 1) => {
+    atoms.push({ element, position })
+    bonds.push({ a: from, b: atoms.length - 1, order, length })
+    return atoms.length - 1
+  }
+  // Two of the three tetrahedral directions on nitrogen; the third is the lone pair.
+  for (const d of coneDirections(sub(nitrogen, alpha), 3, TETRAHEDRAL_CONE, 0).slice(0, 2)) {
+    push('H', add(nitrogen, mul(d, AA.nh)), 5, AA.nh)
+  }
+  /** Adds an atom with no bond of its own, for fragments that bond up afterwards. */
+  const place = (element, position) => {
+    atoms.push({ element, position })
+    return atoms.length - 1
+  }
+  return { atoms, bonds, push, place, carboxyl, alpha, nitrogen, sideDirection }
+}
+
+/** Shorthand for the shared parts of an amino acid definition. */
+function aminoAcid(entry) {
+  return {
+    category: 'aminoacid',
+    shape: entry.shape ?? 'chain',
+    shapeZh: entry.shapeZh ?? '链形 + 侧链',
+    ...entry,
+    build() {
+      const base = aminoAcidBackbone()
+      entry.sideChain(base)
+      return { atoms: base.atoms, bonds: base.bonds }
+    },
+  }
+}
+
+/**
+ * `count` sp3 carbons leaving the alpha carbon in an extended chain. Their hydrogens
+ * are left to the caller, because the last carbon's pair depends on whatever the
+ * side chain ends in.
+ *
+ * The returned path is [carboxyl, alpha, C1..Cn] — the three-atom history
+ * `extendAnti` needs to carry the chain further.
+ */
+function sideChainCarbons(base, count) {
+  const { push, alpha, carboxyl, sideDirection } = base
+  const path = [carboxyl, alpha]
+  const indices = []
+  for (let i = 0; i < count; i++) {
+    const position =
+      i === 0
+        ? add(alpha, mul(sideDirection, AA.cb))
+        : extendAnti(
+            path[path.length - 3],
+            path[path.length - 2],
+            path[path.length - 1],
+            112,
+            AA.cb,
+          )
+    indices.push(push('C', position, i === 0 ? 1 : indices[i - 1], AA.cb))
+    path.push(position)
+  }
+  return { path, indices }
+}
+
+/** Two hydrogens on each CH2 of a side chain, given the atom that follows the last. */
+function fillChainHydrogens(base, path, indices, tail) {
+  const carbons = path.slice(2)
+  carbons.forEach((carbon, i) => {
+    const next = i + 1 < carbons.length ? carbons[i + 1] : tail
+    for (const p of completeSp3(carbon, path[i + 1], next, 107, AA.ch)) {
+      base.push('H', p, indices[i], AA.ch)
+    }
+  })
+}
+
+/** A bond between two atoms that are both already placed. */
+function bondBetween(base, a, b, length, order = 1) {
+  base.bonds.push({ a, b, order, length })
+}
+
+/** A flat -C(=O)NH2 on a carbon that is already bonded back to `anchor`. */
+function amide(base, carbon, carbonIndex, anchor, amideO, amideN) {
+  const axis = sub(carbon, anchor)
+  const oxygen = aroundAxis(carbon, axis, 60, amideO, 0)
+  base.push('O', oxygen, carbonIndex, amideO, 2)
+  const nitrogen = aroundAxis(carbon, axis, 60, amideN, 180)
+  const nitrogenIndex = base.push('N', nitrogen, carbonIndex, amideN)
+  // Both hydrogens lie in the amide plane, which is what makes the group flat.
+  const plane = cross(sub(oxygen, carbon), sub(nitrogen, carbon))
+  for (const side of [1, -1]) {
+    base.push('H', inPlane(nitrogen, carbon, 120, AA.nh, plane, side), nitrogenIndex, AA.nh)
+  }
+}
+
+/**
+ * A benzene ring hanging off `anchor` at `ipso`. Ring position 0 is the attachment
+ * and 3 is para to it, so `hydroxylAt: 3` turns phenylalanine into tyrosine.
+ */
+function aromaticRing(base, ipso, anchor, anchorIndex, { hydroxylAt } = {}) {
+  const cc = 1.397
+  const ch = 1.084
+  const co = 1.37
+  const axis = sub(ipso, anchor)
+  // Any plane through the bond will do; the reference only avoids a degenerate cross.
+  const reference = Math.abs(dot(norm(axis), [0, 0, 1])) < 0.9 ? [0, 0, 1] : [1, 0, 0]
+  const vertices = ringAtVertex(ipso, axis, cross(axis, reference), 6, cc)
+  const centre = mul(vertices.reduce((total, p) => add(total, p), [0, 0, 0]), 1 / 6)
+  const plane = cross(sub(vertices[1], vertices[0]), sub(vertices[2], vertices[1]))
+  const first = base.push('C', vertices[0], anchorIndex, 1.51)
+  const indices = [first]
+  for (let i = 1; i < 6; i++) {
+    indices.push(base.push('C', vertices[i], indices[i - 1], cc, i % 2 === 0 ? 2 : 1))
+  }
+  bondBetween(base, indices[5], first, cc, 2)
+  const outward = (p, distance) => add(p, mul(norm(sub(p, centre)), distance))
+  for (let i = 1; i < 6; i++) {
+    if (i === hydroxylAt) {
+      const oxygen = outward(vertices[i], co)
+      const oxygenIndex = base.push('O', oxygen, indices[i], co)
+      base.push('H', inPlane(oxygen, vertices[i], 108, AA.oh, plane, 1), oxygenIndex, AA.oh)
+      continue
+    }
+    base.push('H', outward(vertices[i], ch), indices[i], ch)
+  }
+}
+
+/**
+ * Moves a rigid fragment so `anchor` lands on `target` with `direction` aimed at
+ * `pointAt`, then spins it about that bond to whichever turn keeps it furthest from
+ * the atoms already placed. Used for the indole of tryptophan, which is built flat
+ * at the origin like every other fused ring here.
+ */
+function rigidPlace(positions, { anchor, direction, target, pointAt, avoid }) {
+  const worldDirection = sub(pointAt, target)
+  // The atom being bonded to sits a bond length away and cannot move, so it would
+  // pin the score at the same value for every turn.
+  const others = avoid.filter((p) => dist(p, target) > 1.7)
+  const place = (spin) =>
+    positions.map((p) => {
+      const aligned = rotateOnto(p, direction, worldDirection, anchor)
+      return rotateAbout(add(aligned, sub(target, anchor)), worldDirection, target, spin)
+    })
+  let best = null
+  for (let spin = 0; spin < 360; spin += 5) {
+    const candidate = place(spin)
+    let closest = Infinity
+    for (const p of candidate.slice(1)) {
+      for (const q of others) closest = Math.min(closest, dist(p, q))
+    }
+    if (!best || closest > best.closest) best = { closest, candidate }
+  }
+  return best.candidate
 }
 
 // ------------------------------------------------------------------- molecules
@@ -2149,7 +2358,7 @@ const DEFINITIONS = [
     formulaDisplayOverride: 'NH2CH2COOH',
     name: 'Glycine',
     nameZh: '甘氨酸',
-    category: 'organic',
+    category: 'aminoacid',
     shape: 'chain',
     shapeZh: '链形',
     idealized: true,
@@ -2706,7 +2915,7 @@ const DEFINITIONS = [
     formula: 'C3H7NO2',
     name: 'Alanine',
     nameZh: '丙氨酸',
-    category: 'organic',
+    category: 'aminoacid',
     shape: 'chain',
     shapeZh: '链形',
     summaryZh: '第二简单的氨基酸。与甘氨酸只差一个甲基，但这个甲基让它有了手性 —— 生物体只用其中的 L 型。',
@@ -4271,7 +4480,7 @@ const DEFINITIONS = [
     formula: 'C5H9NO4',
     name: 'Glutamic acid',
     nameZh: '谷氨酸',
-    category: 'organic',
+    category: 'aminoacid',
     shape: 'zigzag-chain',
     shapeZh: '锯齿链 + 氨基',
     summaryZh:
@@ -5754,6 +5963,590 @@ const DEFINITIONS = [
       return { atoms, bonds }
     },
   },
+
+  // ---- 蛋白质的二十种氨基酸 ----
+  aminoAcid({
+    id: 'serine',
+    formula: 'C3H7NO3',
+    name: 'Serine',
+    nameZh: '丝氨酸',
+    shapeZh: '链形 + 羟基',
+    summaryZh:
+      '侧链只是一个羟基，却是酶最常用的"活性手"：胰蛋白酶、乙酰胆碱酯酶都靠这个氧原子去进攻底物。它也是细胞里磷酸化开关最常见的落点。',
+    summaryEn:
+      'Its side chain is just a hydroxyl, yet it is the working hand of countless enzymes — trypsin and acetylcholinesterase both attack their substrate with this oxygen. It is also the commonest site of phosphorylation.',
+    sideChain(base) {
+      const co = 1.42
+      const { path, indices } = sideChainCarbons(base, 1)
+      const cb = path[2]
+      const oxygen = extendAnti(path[0], path[1], cb, 109.5, co)
+      const oxygenIndex = base.push('O', oxygen, indices[0], co)
+      fillChainHydrogens(base, path, indices, oxygen)
+      base.push('H', branch(oxygen, cb, 108, AA.oh, 0), oxygenIndex, AA.oh)
+    },
+  }),
+  aminoAcid({
+    id: 'cysteine',
+    formula: 'C3H7NO2S',
+    name: 'Cysteine',
+    nameZh: '半胱氨酸',
+    shapeZh: '链形 + 巯基',
+    summaryZh:
+      '唯一带巯基的常见氨基酸。两个半胱氨酸能氧化成二硫键，把蛋白质链缝在一起 —— 头发的硬度、烫发的原理、胰岛素两条链的连接，靠的都是这一个键。',
+    summaryEn:
+      'The only common amino acid with a thiol. Two cysteines oxidise into a disulfide bridge that stitches a protein together: the stiffness of hair, the chemistry of a perm and the link between insulin’s two chains are all this one bond.',
+    sideChain(base) {
+      const cs = 1.81
+      const sh = 1.34
+      const { path, indices } = sideChainCarbons(base, 1)
+      const cb = path[2]
+      const sulfur = extendAnti(path[0], path[1], cb, 114, cs)
+      const sulfurIndex = base.push('S', sulfur, indices[0], cs)
+      fillChainHydrogens(base, path, indices, sulfur)
+      base.push('H', branch(sulfur, cb, 96, sh, 0), sulfurIndex, sh)
+    },
+  }),
+  aminoAcid({
+    id: 'threonine',
+    formula: 'C4H9NO3',
+    name: 'Threonine',
+    nameZh: '苏氨酸',
+    shapeZh: '支链 + 羟基',
+    summaryZh:
+      '必需氨基酸，人体不能合成。侧链同时带羟基和甲基，因而有两个手性中心；它也是蛋白质磷酸化的三个落点之一（另两个是丝氨酸和酪氨酸）。',
+    summaryEn:
+      'An essential amino acid the body cannot make. Carrying both a hydroxyl and a methyl, its side chain has two chiral centres, and like serine and tyrosine it is one of the three residues cells phosphorylate.',
+    sideChain({ push, alpha, carboxyl, sideDirection }) {
+      const co = 1.43
+      const cb = add(alpha, mul(sideDirection, AA.cb))
+      const cbIndex = push('C', cb, 1, AA.cb)
+      const oxygen = extendAnti(carboxyl, alpha, cb, 109.5, co)
+      const oxygenIndex = push('O', oxygen, cbIndex, co)
+      const [methylDirection, hydrogenDirection] = completeSp3(cb, alpha, oxygen, 108, 1)
+      const methylC = towards(cb, methylDirection, AA.cb)
+      const methylIndex = push('C', methylC, cbIndex, AA.cb)
+      push('H', towards(cb, hydrogenDirection, AA.ch), cbIndex, AA.ch)
+      push('H', branch(oxygen, cb, 108, AA.oh, 0), oxygenIndex, AA.oh)
+      for (const h of methyl(methylC, cb, AA.ch)) push('H', h, methylIndex, AA.ch)
+    },
+  }),
+  aminoAcid({
+    id: 'valine',
+    formula: 'C5H11NO2',
+    name: 'Valine',
+    nameZh: '缬氨酸',
+    shapeZh: '支链',
+    summaryZh:
+      '必需氨基酸，与亮氨酸、异亮氨酸并称支链氨基酸（BCAA），健身补剂里的主角。血红蛋白第 6 位的谷氨酸若被它替换，就是镰状细胞贫血 —— 一个侧链之差。',
+    summaryEn:
+      'An essential amino acid and, with leucine and isoleucine, one of the branched-chain amino acids sold as BCAA supplements. Swap it for the glutamate at position 6 of haemoglobin and you get sickle-cell anaemia — one side chain apart.',
+    sideChain({ push, alpha, sideDirection }) {
+      const cb = add(alpha, mul(sideDirection, AA.cb))
+      const cbIndex = push('C', cb, 1, AA.cb)
+      const branches = coneDirections(sub(cb, alpha), 3, TETRAHEDRAL_CONE, 180)
+      for (const direction of branches.slice(0, 2)) {
+        const methylC = add(cb, mul(direction, AA.cb))
+        const methylIndex = push('C', methylC, cbIndex, AA.cb)
+        for (const h of methyl(methylC, cb, AA.ch)) push('H', h, methylIndex, AA.ch)
+      }
+      push('H', add(cb, mul(branches[2], AA.ch)), cbIndex, AA.ch)
+    },
+  }),
+  aminoAcid({
+    id: 'leucine',
+    formula: 'C6H13NO2',
+    name: 'Leucine',
+    nameZh: '亮氨酸',
+    shapeZh: '支链',
+    summaryZh:
+      '蛋白质里最常见的氨基酸之一，也是必需氨基酸。它能直接激活 mTOR 通路启动肌肉蛋白合成 —— 乳清蛋白被健身圈看重，很大程度上就是因为亮氨酸含量高。',
+    summaryEn:
+      'One of the most abundant amino acids in protein, and an essential one. It switches on the mTOR pathway that starts muscle protein synthesis, which is much of why whey protein is prized in the gym.',
+    sideChain(base) {
+      const { push } = base
+      const { path, indices } = sideChainCarbons(base, 2)
+      const [cb, cg] = path.slice(2)
+      const cgIndex = indices[1]
+      const branches = coneDirections(sub(cg, cb), 3, TETRAHEDRAL_CONE, 180)
+      for (const direction of branches.slice(0, 2)) {
+        const methylC = add(cg, mul(direction, AA.cb))
+        const methylIndex = push('C', methylC, cgIndex, AA.cb)
+        for (const h of methyl(methylC, cg, AA.ch)) push('H', h, methylIndex, AA.ch)
+      }
+      push('H', add(cg, mul(branches[2], AA.ch)), cgIndex, AA.ch)
+      // Only the first carbon is a CH2; the branch point keeps a single hydrogen.
+      for (const p of completeSp3(cb, path[1], cg, 107, AA.ch)) push('H', p, indices[0], AA.ch)
+    },
+  }),
+  aminoAcid({
+    id: 'isoleucine',
+    formula: 'C6H13NO2',
+    name: 'Isoleucine',
+    nameZh: '异亮氨酸',
+    shapeZh: '支链',
+    summaryZh:
+      '与亮氨酸同分异构，只是分叉位置差一个碳：亮氨酸分叉在 γ 碳，它分叉在 β 碳，于是有两个手性中心。同为支链必需氨基酸。',
+    summaryEn:
+      'An isomer of leucine that branches one carbon earlier — at the beta carbon rather than the gamma — which gives it two chiral centres. Also a branched-chain essential amino acid.',
+    sideChain({ push, alpha, carboxyl, sideDirection }) {
+      const cb = add(alpha, mul(sideDirection, AA.cb))
+      const cbIndex = push('C', cb, 1, AA.cb)
+      const cg1 = extendAnti(carboxyl, alpha, cb, 111, AA.cb)
+      const cg1Index = push('C', cg1, cbIndex, AA.cb)
+      const [methylDirection, hydrogenDirection] = completeSp3(cb, alpha, cg1, 108, 1)
+      const cg2 = towards(cb, methylDirection, AA.cb)
+      const cg2Index = push('C', cg2, cbIndex, AA.cb)
+      push('H', towards(cb, hydrogenDirection, AA.ch), cbIndex, AA.ch)
+      for (const h of methyl(cg2, cb, AA.ch)) push('H', h, cg2Index, AA.ch)
+      const cd1 = extendAnti(alpha, cb, cg1, 112, AA.cb)
+      const cd1Index = push('C', cd1, cg1Index, AA.cb)
+      for (const p of completeSp3(cg1, cb, cd1, 107, AA.ch)) push('H', p, cg1Index, AA.ch)
+      for (const h of methyl(cd1, cg1, AA.ch)) push('H', h, cd1Index, AA.ch)
+    },
+  }),
+  aminoAcid({
+    id: 'methionine',
+    formula: 'C5H11NO2S',
+    name: 'Methionine',
+    nameZh: '甲硫氨酸',
+    shapeZh: '链形 + 硫醚',
+    summaryZh:
+      '每一条蛋白质链都从它开始 —— AUG 是通用的起始密码子。侧链的硫醚不带电、容易被氧化，也是细胞主要甲基供体 SAM 的来源。必需氨基酸。',
+    summaryEn:
+      'Every protein chain starts with it: AUG is the universal start codon. Its thioether side chain is uncharged and easily oxidised, and it is the source of the cell’s main methyl donor, SAM. An essential amino acid.',
+    sideChain(base) {
+      const cs = 1.81
+      const sc = 1.8
+      const { push } = base
+      const { path, indices } = sideChainCarbons(base, 2)
+      const [cb, cg] = path.slice(2)
+      const sulfur = extendAnti(path[1], cb, cg, 114, cs)
+      const sulfurIndex = push('S', sulfur, indices[1], cs)
+      const methylC = extendAnti(cb, cg, sulfur, 99, sc)
+      const methylIndex = push('C', methylC, sulfurIndex, sc)
+      fillChainHydrogens(base, path, indices, sulfur)
+      for (const h of methyl(methylC, sulfur, AA.ch)) push('H', h, methylIndex, AA.ch)
+    },
+  }),
+  aminoAcid({
+    id: 'asparticacid',
+    formula: 'C4H7NO4',
+    name: 'Aspartic acid',
+    nameZh: '天冬氨酸',
+    shapeZh: '链形 + 羧基',
+    summaryZh:
+      '侧链多一个羧基，在体内带负电，因此常出现在蛋白质表面和酶的活性中心。它也是阿斯巴甜的两个组成氨基酸之一。',
+    summaryEn:
+      'A second carboxyl on the side chain leaves it negatively charged in the body, so it sits on protein surfaces and in enzyme active sites. It is also one of the two amino acids that make up aspartame.',
+    sideChain(base) {
+      const cc = 1.52
+      const co = 1.21
+      const coh = 1.32
+      const { push } = base
+      const { path, indices } = sideChainCarbons(base, 1)
+      const cb = path[2]
+      const cg = extendAnti(path[0], path[1], cb, 112, cc)
+      const cgIndex = push('C', cg, indices[0], cc)
+      fillChainHydrogens(base, path, indices, cg)
+      const axis = sub(cg, cb)
+      push('O', aroundAxis(cg, axis, 60, co, 0), cgIndex, co, 2)
+      const oAcid = aroundAxis(cg, axis, 60, coh, 180)
+      const oAcidIndex = push('O', oAcid, cgIndex, coh)
+      push('H', branch(oAcid, cg, 106, AA.oh, 0), oAcidIndex, AA.oh)
+    },
+  }),
+  aminoAcid({
+    id: 'asparagine',
+    formula: 'C4H8N2O3',
+    name: 'Asparagine',
+    nameZh: '天冬酰胺',
+    shapeZh: '链形 + 酰胺',
+    summaryZh:
+      '天冬氨酸的酰胺形式，1806 年从芦笋汁里首次分离 —— 名字就来自芦笋。它是蛋白质糖基化的挂载点；高温烹调时与还原糖反应，还会生成丙烯酰胺。',
+    summaryEn:
+      'The amide form of aspartate, first isolated from asparagus juice in 1806 — hence the name. It is where sugars are attached to proteins, and at frying temperatures it reacts with reducing sugars to form acrylamide.',
+    sideChain(base) {
+      const cc = 1.52
+      const amideO = 1.23
+      const amideN = 1.34
+      const { push } = base
+      const { path, indices } = sideChainCarbons(base, 1)
+      const cb = path[2]
+      const cg = extendAnti(path[0], path[1], cb, 112, cc)
+      const cgIndex = push('C', cg, indices[0], cc)
+      fillChainHydrogens(base, path, indices, cg)
+      amide(base, cg, cgIndex, cb, amideO, amideN)
+    },
+  }),
+  aminoAcid({
+    id: 'glutamine',
+    formula: 'C5H10N2O3',
+    name: 'Glutamine',
+    nameZh: '谷氨酰胺',
+    shapeZh: '链形 + 酰胺',
+    summaryZh:
+      '血液里含量最高的氨基酸，是身体在细胞之间搬运氮的主要方式。肠道细胞和免疫细胞把它当燃料，创伤或大手术后需求会明显上升。',
+    summaryEn:
+      'The most abundant amino acid in blood, and the body’s main way of shipping nitrogen between cells. Gut and immune cells burn it as fuel, and demand climbs after trauma or major surgery.',
+    sideChain(base) {
+      const cc = 1.52
+      const amideO = 1.23
+      const amideN = 1.34
+      const { push } = base
+      const { path, indices } = sideChainCarbons(base, 2)
+      const [, cg] = path.slice(2)
+      const cd = extendAnti(path[1], path[2], cg, 112, cc)
+      const cdIndex = push('C', cd, indices[1], cc)
+      fillChainHydrogens(base, path, indices, cd)
+      amide(base, cd, cdIndex, cg, amideO, amideN)
+    },
+  }),
+  aminoAcid({
+    id: 'lysine',
+    formula: 'C6H14N2O2',
+    name: 'Lysine',
+    nameZh: '赖氨酸',
+    shapeZh: '长链 + 氨基',
+    summaryZh:
+      '侧链末端的氨基在体内带正电，所以它常留在蛋白质表面、参与结合 DNA。谷物里含量偏低，是典型的"限制性氨基酸"——谷豆同食能互补，正是这个道理。',
+    summaryEn:
+      'The amine at the end of its side chain is positively charged in the body, so it stays on protein surfaces and grips DNA. Cereals are short of it, which is exactly why grains and pulses eaten together complement each other.',
+    sideChain(base) {
+      const { push } = base
+      const { path, indices } = sideChainCarbons(base, 4)
+      const last = path[path.length - 1]
+      const nitrogen = extendAnti(path[path.length - 3], path[path.length - 2], last, 112, AA.cn)
+      const nitrogenIndex = push('N', nitrogen, indices[indices.length - 1], AA.cn)
+      fillChainHydrogens(base, path, indices, nitrogen)
+      for (const d of coneDirections(sub(nitrogen, last), 3, TETRAHEDRAL_CONE, 0).slice(0, 2)) {
+        push('H', add(nitrogen, mul(d, AA.nh)), nitrogenIndex, AA.nh)
+      }
+    },
+  }),
+  aminoAcid({
+    id: 'arginine',
+    formula: 'C6H14N4O2',
+    name: 'Arginine',
+    nameZh: '精氨酸',
+    shapeZh: '长链 + 胍基',
+    summaryZh:
+      '侧链末端的胍基在生理 pH 下几乎总是带正电，是氨基酸里最强的碱。它也是一氧化氮的原料 —— 血管舒张、阴茎勃起、免疫杀菌都用得上这条通路。',
+    summaryEn:
+      'The guanidinium at the end of its side chain stays positively charged at almost any physiological pH, making it the most basic amino acid. It is also the raw material for nitric oxide, the signal that relaxes blood vessels.',
+    sideChain(base) {
+      const cn = 1.46
+      const cGuanidine = 1.33
+      const { push } = base
+      const { path, indices } = sideChainCarbons(base, 3)
+      const cd = path[path.length - 1]
+      const ne = extendAnti(path[path.length - 3], path[path.length - 2], cd, 112, cn)
+      const neIndex = push('N', ne, indices[indices.length - 1], cn)
+      fillChainHydrogens(base, path, indices, ne)
+      const cz = extendAnti(path[path.length - 2], cd, ne, 124, cGuanidine)
+      const czIndex = push('C', cz, neIndex, cGuanidine)
+      // The guanidinium group is flat: both nitrogens lie in the plane of C-N-C.
+      const plane = cross(sub(ne, cd), sub(cz, ne))
+      const nh1 = inPlane(cz, ne, 120, cGuanidine, plane, 1)
+      const nh1Index = push('N', nh1, czIndex, cGuanidine, 2)
+      const nh2 = inPlane(cz, ne, 120, cGuanidine, plane, -1)
+      const nh2Index = push('N', nh2, czIndex, cGuanidine)
+      push(
+        'H',
+        furthestFrom([1, -1].map((side) => inPlane(ne, cz, 118, AA.nh, plane, side)), cd),
+        neIndex,
+        AA.nh,
+      )
+      push(
+        'H',
+        furthestFrom([1, -1].map((side) => inPlane(nh1, cz, 120, AA.nh, plane, side)), ne),
+        nh1Index,
+        AA.nh,
+      )
+      for (const side of [1, -1]) {
+        push('H', inPlane(nh2, cz, 120, AA.nh, plane, side), nh2Index, AA.nh)
+      }
+    },
+  }),
+  aminoAcid({
+    id: 'phenylalanine',
+    formula: 'C9H11NO2',
+    name: 'Phenylalanine',
+    nameZh: '苯丙氨酸',
+    shape: 'aromatic-side-chain',
+    shapeZh: '链形 + 苯环',
+    idealized: true,
+    summaryZh:
+      '必需氨基酸，也是酪氨酸、多巴胺、肾上腺素的上游原料。苯丙酮尿症患者缺少分解它的酶，因此无糖饮料上会印"含苯丙氨酸"的警示 —— 阿斯巴甜水解会放出它。',
+    summaryEn:
+      'An essential amino acid and the starting point for tyrosine, dopamine and adrenaline. People with phenylketonuria lack the enzyme that breaks it down, which is why diet drinks carry a phenylalanine warning: aspartame releases it.',
+    sideChain(base) {
+      const { path, indices } = sideChainCarbons(base, 1)
+      const cb = path[2]
+      const ipso = extendAnti(path[0], path[1], cb, 113, 1.51)
+      fillChainHydrogens(base, path, indices, ipso)
+      aromaticRing(base, ipso, cb, indices[0], {})
+    },
+  }),
+  aminoAcid({
+    id: 'tyrosine',
+    formula: 'C9H11NO3',
+    name: 'Tyrosine',
+    nameZh: '酪氨酸',
+    shape: 'aromatic-side-chain',
+    shapeZh: '链形 + 酚环',
+    idealized: true,
+    summaryZh:
+      '苯丙氨酸加一个羟基。它是多巴胺、肾上腺素、甲状腺激素和黑色素的共同前体 —— 头发和皮肤的颜色、应激反应、代谢速率，都从这个分子出发。',
+    summaryEn:
+      'Phenylalanine plus one hydroxyl. It is the shared precursor of dopamine, adrenaline, thyroid hormone and melanin, so hair and skin colour, the stress response and metabolic rate all start here.',
+    sideChain(base) {
+      const { path, indices } = sideChainCarbons(base, 1)
+      const cb = path[2]
+      const ipso = extendAnti(path[0], path[1], cb, 113, 1.51)
+      fillChainHydrogens(base, path, indices, ipso)
+      aromaticRing(base, ipso, cb, indices[0], { hydroxylAt: 3 })
+    },
+  }),
+  aminoAcid({
+    id: 'histidine',
+    formula: 'C6H9N3O2',
+    name: 'Histidine',
+    nameZh: '组氨酸',
+    shape: 'imidazole-side-chain',
+    shapeZh: '链形 + 咪唑环',
+    idealized: true,
+    summaryZh:
+      '咪唑环的 pKa 约 6，恰好在体液 pH 附近 —— 它可以在同一个反应里先接一个质子、再交出去，因此几乎所有酶的活性中心都能见到它。血红蛋白正是靠它把铁固定住。',
+    summaryEn:
+      'Its imidazole ring has a pKa near 6, right at body pH, so it can pick up a proton and hand it on within one reaction — which is why it turns up in so many enzyme active sites. In haemoglobin it is what holds the iron in place.',
+    sideChain(base) {
+      const ringBond = 1.36
+      const ringCH = 1.08
+      const { push } = base
+      const { path, indices } = sideChainCarbons(base, 1)
+      const cb = path[2]
+      const cg = extendAnti(path[0], path[1], cb, 113, 1.5)
+      const cgIndex = push('C', cg, indices[0], 1.5)
+      fillChainHydrogens(base, path, indices, cg)
+      // Ring order from the attachment: CG, ND1, CE1, NE2, CD2.
+      const axis = sub(cg, cb)
+      const vertices = ringAtVertex(cg, axis, cross(axis, sub(path[1], cb)), 5, ringBond)
+      const centre = mul(vertices.reduce((total, p) => add(total, p), [0, 0, 0]), 1 / 5)
+      const ringIndices = [cgIndex]
+      for (let i = 1; i < 5; i++) {
+        ringIndices.push(
+          push(i === 1 || i === 3 ? 'N' : 'C', vertices[i], ringIndices[i - 1], ringBond, i === 3 ? 2 : 1),
+        )
+      }
+      bondBetween(base, ringIndices[4], cgIndex, ringBond, 2)
+      const outward = (p, distance) => add(p, mul(norm(sub(p, centre)), distance))
+      push('H', outward(vertices[1], AA.nh), ringIndices[1], AA.nh)
+      push('H', outward(vertices[2], ringCH), ringIndices[2], ringCH)
+      push('H', outward(vertices[4], ringCH), ringIndices[4], ringCH)
+    },
+  }),
+  aminoAcid({
+    id: 'tryptophan',
+    formula: 'C11H12N2O2',
+    name: 'Tryptophan',
+    nameZh: '色氨酸',
+    shape: 'fused-side-chain',
+    shapeZh: '链形 + 吲哚并环',
+    idealized: true,
+    summaryZh:
+      '体积最大的氨基酸，也是必需氨基酸。它是血清素和褪黑素的原料 —— "吃火鸡犯困"的说法就来自它，虽然实际影响很小。蛋白质在 280 nm 的吸光度主要也来自它。',
+    summaryEn:
+      'The largest amino acid and an essential one. It is the raw material for serotonin and melatonin — the source of the turkey-makes-you-sleepy story, though the real effect is small — and it dominates a protein’s absorbance at 280 nm.',
+    sideChain(base) {
+      const ringBond = 1.39
+      const ringCH = 1.08
+      const { push } = base
+      const { path, indices } = sideChainCarbons(base, 1)
+      const cb = path[2]
+      const c3 = extendAnti(path[0], path[1], cb, 113, 1.5)
+      fillChainHydrogens(base, path, indices, c3)
+      // Indole, built flat at the origin and then swung onto the CB-C3 bond.
+      const { shared, ringA, ringB } = fusedRings(ringBond, 6, 5)
+      const [c3a, c7a] = shared
+      const [, , c7, c6, c5, c4] = ringA
+      const [, , n1, c2, localC3] = ringB
+      const sixCentre = mul(ringA.reduce((total, p) => add(total, p), [0, 0, 0]), 1 / 6)
+      const fiveCentre = mul(ringB.reduce((total, p) => add(total, p), [0, 0, 0]), 1 / 5)
+      const outward = (p, centre, distance) => add(p, mul(norm(sub(p, centre)), distance))
+      const localAtoms = [
+        { element: 'C', position: localC3 },
+        { element: 'C', position: c2 },
+        { element: 'N', position: n1 },
+        { element: 'C', position: c7a },
+        { element: 'C', position: c3a },
+        { element: 'C', position: c7 },
+        { element: 'C', position: c6 },
+        { element: 'C', position: c5 },
+        { element: 'C', position: c4 },
+        { element: 'H', position: outward(c2, fiveCentre, ringCH) },
+        { element: 'H', position: outward(n1, fiveCentre, AA.nh) },
+        { element: 'H', position: outward(c7, sixCentre, ringCH) },
+        { element: 'H', position: outward(c6, sixCentre, ringCH) },
+        { element: 'H', position: outward(c5, sixCentre, ringCH) },
+        { element: 'H', position: outward(c4, sixCentre, ringCH) },
+      ]
+      const attachment = outward(localC3, fiveCentre, 1)
+      const moved = rigidPlace(localAtoms.map((a) => a.position), {
+        anchor: localC3,
+        direction: sub(attachment, localC3),
+        target: c3,
+        pointAt: cb,
+        avoid: base.atoms.map((a) => a.position),
+      })
+      const first = push('C', moved[0], indices[0], 1.5)
+      const ring = [first]
+      for (let i = 1; i < 9; i++) ring.push(base.place(localAtoms[i].element, moved[i]))
+      for (const [a, b, order] of [
+        [0, 1, 2], [1, 2, 1], [2, 3, 1], [3, 4, 2], [4, 0, 1],
+        [3, 5, 1], [5, 6, 2], [6, 7, 1], [7, 8, 2], [8, 4, 1],
+      ]) {
+        bondBetween(base, ring[a], ring[b], ringBond, order)
+      }
+      // Ring position 2 is the indole nitrogen; the rest take aromatic C-H.
+      const hydrogenOn = [1, 2, 5, 6, 7, 8]
+      hydrogenOn.forEach((ringIndex, i) => {
+        const length = ringIndex === 2 ? AA.nh : ringCH
+        bondBetween(base, ring[ringIndex], base.place('H', moved[9 + i]), length, 1)
+      })
+    },
+  }),
+  {
+    id: 'proline',
+    formula: 'C5H9NO2',
+    name: 'Proline',
+    nameZh: '脯氨酸',
+    category: 'aminoacid',
+    shape: 'five-ring',
+    shapeZh: '五元环 + 羧基',
+    idealized: true,
+    summaryZh:
+      '唯一侧链接回主链的氨基酸：它的氮被锁在五元环里。因此它转不动主链，α-螺旋走到脯氨酸就会被打断 —— 蛋白质里的"折角"多半是它。胶原蛋白约每三个残基就有一个。',
+    summaryEn:
+      'The only amino acid whose side chain loops back to the backbone, locking its nitrogen inside a five-membered ring. That rigidity breaks an alpha helix wherever it appears, so proline is usually the kink in a protein — and roughly every third residue of collagen.',
+    build() {
+      const ringBond = 1.5
+      const cc = 1.52
+      const co = 1.21
+      const coh = 1.33
+      const radius = ringBond / (2 * Math.sin(Math.PI / 5))
+      // Ring: N, CA, CB, CG, CD.
+      const [nitrogen, alpha, cb, cg, cd] = ring([0, 0, 0], 5, radius)
+      const atoms = [
+        { element: 'N', position: nitrogen },
+        { element: 'C', position: alpha },
+        { element: 'C', position: cb },
+        { element: 'C', position: cg },
+        { element: 'C', position: cd },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 1, length: ringBond },
+        { a: 1, b: 2, order: 1, length: ringBond },
+        { a: 2, b: 3, order: 1, length: ringBond },
+        { a: 3, b: 4, order: 1, length: ringBond },
+        { a: 4, b: 0, order: 1, length: ringBond },
+      ]
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      const [carboxylDirection, hydrogenDirection] = completeSp3(alpha, nitrogen, cb, 109.5, 1)
+      const carboxyl = towards(alpha, carboxylDirection, cc)
+      const carboxylIndex = push('C', carboxyl, 1, cc)
+      push('H', towards(alpha, hydrogenDirection, AA.ch), 1, AA.ch)
+      const axis = sub(carboxyl, alpha)
+      push('O', aroundAxis(carboxyl, axis, 60, co, 0), carboxylIndex, co, 2)
+      const oAcid = aroundAxis(carboxyl, axis, 60, coh, 180)
+      const oAcidIndex = push('O', oAcid, carboxylIndex, coh)
+      push('H', branch(oAcid, carboxyl, 106, AA.oh, 0), oAcidIndex, AA.oh)
+      // The ring nitrogen keeps one hydrogen, pointing straight out of the ring.
+      push('H', mul(norm(nitrogen), len(nitrogen) + AA.nh), 0, AA.nh)
+      for (const [index, centre, previous, next] of [
+        [2, cb, alpha, cg],
+        [3, cg, cb, cd],
+        [4, cd, cg, nitrogen],
+      ]) {
+        for (const p of completeSp3(centre, previous, next, 107, AA.ch)) push('H', p, index, AA.ch)
+      }
+      return { atoms, bonds }
+    },
+  },
+  {
+    id: 'glycylglycine',
+    formula: 'C4H8N2O3',
+    name: 'Glycylglycine',
+    nameZh: '甘氨酰甘氨酸',
+    category: 'aminoacid',
+    shape: 'peptide',
+    shapeZh: '二肽 · 平面肽键',
+    summaryZh:
+      '最简单的二肽：两个甘氨酸脱去一分子水连成。中间那个 C—N 键就是肽键 —— 它有部分双键性质，六个原子被锁在同一平面上不能自由旋转，蛋白质能折出固定形状正是因为这个限制。',
+    summaryEn:
+      'The simplest dipeptide: two glycines joined with the loss of one water. That middle C-N bond is the peptide bond, and because it has partial double-bond character six atoms are locked into one plane. Proteins can fold into fixed shapes precisely because of that constraint.',
+    build() {
+      const cn = 1.45
+      const ca = 1.52
+      const peptideCN = 1.33
+      const peptideCO = 1.23
+      const co = 1.21
+      const coh = 1.33
+      const normal = [0, 0, 1]
+      // Backbone drawn extended in one plane, which is also what keeps the peptide
+      // unit planar: N1, CA1, C1, N2, CA2, C2.
+      const [n1, ca1, c1, n2, ca2, c2] = planarChain([0, 0, 0], [cn, 0, 0], [
+        { angle: 111, length: ca, side: 1 },
+        { angle: 116, length: peptideCN, side: -1 },
+        { angle: 122, length: cn, side: 1 },
+        { angle: 111, length: ca, side: -1 },
+      ])
+      const atoms = [
+        { element: 'N', position: n1 },
+        { element: 'C', position: ca1 },
+        { element: 'C', position: c1 },
+        { element: 'N', position: n2 },
+        { element: 'C', position: ca2 },
+        { element: 'C', position: c2 },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 1, length: cn },
+        { a: 1, b: 2, order: 1, length: ca },
+        { a: 2, b: 3, order: 1, length: peptideCN },
+        { a: 3, b: 4, order: 1, length: cn },
+        { a: 4, b: 5, order: 1, length: ca },
+      ]
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      // Carbonyl oxygen opposite the nitrogen it points away from, and the amide
+      // hydrogen opposite the next alpha carbon: the trans peptide unit.
+      push('O', furthestFrom([1, -1].map((s) => inPlane(c1, ca1, 121, peptideCO, normal, s)), n2), 2, peptideCO, 2)
+      push('H', furthestFrom([1, -1].map((s) => inPlane(n2, c1, 119, AA.nh, normal, s)), ca2), 3, AA.nh)
+      // Terminal carboxyl.
+      push('O', inPlane(c2, ca2, 125, co, normal, 1), 5, co, 2)
+      const oAcid = inPlane(c2, ca2, 112, coh, normal, -1)
+      const oAcidIndex = push('O', oAcid, 5, coh)
+      push('H', inPlane(oAcid, c2, 107, AA.oh, normal, 1), oAcidIndex, AA.oh)
+      for (const [index, centre, previous, next] of [
+        [1, ca1, n1, c1],
+        [4, ca2, n2, c2],
+      ]) {
+        for (const p of completeSp3(centre, previous, next, 107, AA.ch)) push('H', p, index, AA.ch)
+      }
+      for (const d of coneDirections(sub(n1, ca1), 3, TETRAHEDRAL_CONE, 0).slice(0, 2)) {
+        push('H', add(n1, mul(d, AA.nh)), 0, AA.nh)
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[3, 2, 4, 122]] },
+  },
+
 ]
 
 // ------------------------------------------------------------------- pipeline
@@ -6013,7 +6806,7 @@ for (const m of molecules) {
   }
 }
 
-const CATEGORY_ORDER = ['element', 'inorganic', 'organic']
+const CATEGORY_ORDER = ['element', 'inorganic', 'organic', 'aminoacid']
 molecules.sort((a, b) => CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category))
 
 if (problems.length) {

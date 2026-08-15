@@ -51,18 +51,25 @@ export function atomColor(symbol: string): string {
   return element?.cpkHex ? `#${element.cpkHex}` : '#C0C0C0'
 }
 
-export const MOLECULE_CATEGORY_ORDER: MoleculeCategory[] = ['element', 'inorganic', 'organic']
+export const MOLECULE_CATEGORY_ORDER: MoleculeCategory[] = [
+  'element',
+  'inorganic',
+  'organic',
+  'aminoacid',
+]
 
 export const MOLECULE_CATEGORY_COLORS: Record<MoleculeCategory, string> = {
   element: '#5EEAD4',
   inorganic: '#7DD3FC',
   organic: '#C4B5FD',
+  aminoacid: '#FDBA74',
 }
 
 export const MOLECULE_CATEGORY_LABELS: Record<MoleculeCategory, { zh: string; en: string }> = {
   element: { zh: '单质', en: 'Element' },
   inorganic: { zh: '无机物', en: 'Inorganic' },
   organic: { zh: '有机物', en: 'Organic' },
+  aminoacid: { zh: '氨基酸与肽', en: 'Amino acids & peptides' },
 }
 
 /** Element symbol -> atom count, in the order the atoms appear. */

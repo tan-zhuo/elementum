@@ -1,4 +1,4 @@
-export type MoleculeCategory = 'element' | 'inorganic' | 'organic'
+export type MoleculeCategory = 'element' | 'inorganic' | 'organic' | 'aminoacid'
 
 export type Vec3 = [number, number, number]
 
