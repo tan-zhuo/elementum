@@ -123,6 +123,49 @@ function aroundAxis(origin, axis, angle, distance, azimuth = 0) {
 }
 
 /**
+ * Walks a chain of atoms in the z = 0 plane, starting from two given atoms. Each
+ * step turns by `angle` at the last atom placed; alternating `side` produces the
+ * all-anti zigzag an extended chain adopts, and repeating a side produces the kink
+ * of a cis double bond.
+ */
+function planarChain(first, second, steps) {
+  const points = [first, second]
+  for (const { angle, length, side } of steps) {
+    const n = points.length
+    points.push(inPlane(points[n - 1], points[n - 2], angle, length, [0, 0, 1], side))
+  }
+  return points
+}
+
+/**
+ * Continues a chain from `c`, in the anti (180 degree dihedral) arrangement of
+ * a-b-c that an extended chain prefers. `planarChain` does the same for chains
+ * lying in the z = 0 plane; this one works in any orientation, which is what the
+ * side chains hanging off a ring need.
+ */
+function extendAnti(a, b, c, angle, distance) {
+  const planeNormal = cross(sub(b, a), sub(c, b))
+  return furthestFrom(
+    [1, -1].map((side) => inPlane(c, b, angle, distance, planeNormal, side)),
+    a,
+  )
+}
+
+/** Of two candidate positions, the one further from `reference`. */
+function furthestFrom(options, reference) {
+  return dist(options[0], reference) > dist(options[1], reference) ? options[0] : options[1]
+}
+
+/** `count` alternating-side steps of the same bond and angle: a saturated backbone. */
+function zigzagSteps(count, length, angle, startSide = 1) {
+  return Array.from({ length: count }, (_, i) => ({
+    angle,
+    length,
+    side: i % 2 === 0 ? startSide : -startSide,
+  }))
+}
+
+/**
  * A bond direction at `angle` from `center`->`reference`, constrained to the plane
  * with the given normal. `side` (+1/-1) picks which way it bends.
  *
@@ -170,9 +213,48 @@ const OCTAHEDRON = [
   [0, 0, -1],
 ]
 
+/** Rodrigues rotation of `p` about the unit axis through `origin`, in degrees. */
+function rotateAbout(p, axis, origin, degrees) {
+  const k = norm(axis)
+  const v = sub(p, origin)
+  const a = degrees * DEG
+  const rotated = add(
+    add(mul(v, Math.cos(a)), mul(cross(k, v), Math.sin(a))),
+    mul(k, dot(k, v) * (1 - Math.cos(a))),
+  )
+  return add(origin, rotated)
+}
+
+/** Rotation about `origin` that swings direction `from` onto direction `to`. */
+function rotateOnto(p, from, to, origin) {
+  const a = norm(from)
+  const b = norm(to)
+  const axis = cross(a, b)
+  if (len(axis) < 1e-9) return p
+  return rotateAbout(p, axis, origin, Math.acos(Math.min(1, Math.max(-1, dot(a, b)))) / DEG)
+}
+
 /** Places atoms along the given unit directions at `distance` from `center`. */
 function place(center, directions, distance) {
   return directions.map((d) => add(center, mul(norm(d), distance)))
+}
+
+/**
+ * A regular polygon that starts at `vertex` and extends along `axis`, lying in the
+ * plane that `axis` and `inPlane` span. Returns the vertices in order, the first
+ * being `vertex` itself — for attaching a second ring to a molecule that is already
+ * placed, where `ring()` (fixed at the origin, in the xy-plane) cannot help.
+ */
+function ringAtVertex(vertex, axis, inPlaneDirection, count, bond) {
+  const radius = bond / (2 * Math.sin(Math.PI / count))
+  const centre = add(vertex, mul(norm(axis), radius))
+  const u = norm(sub(vertex, centre))
+  const raw = sub(inPlaneDirection, mul(u, dot(inPlaneDirection, u)))
+  const v = norm(raw)
+  const step = (2 * Math.PI) / count
+  return Array.from({ length: count }, (_, i) =>
+    add(centre, mul(add(mul(u, Math.cos(i * step)), mul(v, Math.sin(i * step))), radius)),
+  )
 }
 
 /** `count` positions evenly spaced on a circle in the xy-plane. */
@@ -184,12 +266,15 @@ function ring(center, count, radius, phase = 0) {
 }
 
 /**
- * Ring radius and half-height of a puckered S8-style crown: eight atoms alternating
- * above and below a circle. Solved from the bond length and bond angle rather than
- * transcribed, so the crown stays self-consistent.
+ * Ring radius and pucker height for a ring of `count` atoms alternating above and
+ * below a circle: the S8 crown at count 8, the cyclohexane chair at count 6.
+ *
+ * Solved from the bond length and bond angle rather than transcribed, so the ring
+ * stays self-consistent. `count` must be even for the alternation to close up.
  */
-function crown8(bond, angle) {
-  const step = 45 * DEG
+function puckeredRing(count, bond, angle) {
+  if (count % 2 !== 0) throw new Error(`puckeredRing needs an even count, got ${count}`)
+  const step = (360 / count) * DEG
   // For adjacent atoms: |d|^2 = k1*r^2 + h^2, and the dot product of the two bond
   // vectors at a vertex is k2*r^2 + h^2.
   const k1 = 2 - 2 * Math.cos(step)
@@ -198,6 +283,81 @@ function crown8(bond, angle) {
   const m = (k2 - c * k1) / (c - 1)
   const rSquared = bond ** 2 / (k1 + m)
   return { radius: Math.sqrt(rSquared), height: Math.sqrt(m * rSquared) }
+}
+
+/** Positions of a puckered ring, atom `i` alternating above/below the xy-plane. */
+function puckeredRingPositions(count, bond, angle) {
+  const { radius, height } = puckeredRing(count, bond, angle)
+  return Array.from({ length: count }, (_, i) => {
+    const a = i * (360 / count) * DEG
+    return [
+      radius * Math.cos(a),
+      radius * Math.sin(a),
+      (i % 2 === 0 ? 1 : -1) * (height / 2),
+    ]
+  })
+}
+
+/** Unit direction vectors of a cone, so callers can place each at its own distance. */
+function coneDirections(axis, count, angle, phase = 0) {
+  const [u, v, w] = frame(axis)
+  const a = angle * DEG
+  return Array.from({ length: count }, (_, i) => {
+    const phi = (phase + (360 / count) * i) * DEG
+    return add(
+      mul(w, Math.cos(a)),
+      add(mul(u, Math.sin(a) * Math.cos(phi)), mul(v, Math.sin(a) * Math.sin(phi))),
+    )
+  })
+}
+
+/**
+ * Two flat regular polygons sharing one edge, as in the purine skeleton (a fused
+ * six- and five-membered ring).
+ *
+ * Returns the shared pair plus each ring's remaining vertices. Both polygons are
+ * built with the same edge length, which is what lets them share an edge exactly —
+ * an idealisation, since real fused rings have slightly unequal bonds.
+ */
+function fusedRings(bond, sizeA, sizeB) {
+  const shared = [
+    [0, bond / 2, 0],
+    [0, -bond / 2, 0],
+  ]
+  const apothem = (n) => bond / (2 * Math.tan(Math.PI / n))
+
+  // Rotating the first shared atom about a ring centre steps around that polygon.
+  // Ring A sits at +x and steps positively; ring B sits at -x and steps negatively.
+  const walk = (centre, count, direction) => {
+    const step = ((2 * Math.PI) / count) * direction
+    const dx = shared[0][0] - centre[0]
+    const dy = shared[0][1] - centre[1]
+    return Array.from({ length: count }, (_, i) => {
+      const a = i * step
+      return [
+        centre[0] + dx * Math.cos(a) - dy * Math.sin(a),
+        centre[1] + dx * Math.sin(a) + dy * Math.cos(a),
+        0,
+      ]
+    })
+  }
+
+  const ringA = walk([apothem(sizeA), 0, 0], sizeA, 1)
+  const ringB = walk([-apothem(sizeB), 0, 0], sizeB, -1)
+  return { shared, ringA, ringB }
+}
+
+/**
+ * Splits the two free tetrahedral directions of a ring carbon into axial and
+ * equatorial. The ring lies around the z axis, so the axial bond is whichever of the
+ * pair points more steeply along z.
+ */
+function axialEquatorial(centre, ringPrev, ringNext, angle, distance) {
+  const [first, second] = completeSp3(centre, ringPrev, ringNext, angle, distance)
+  const steepness = (p) => Math.abs(p[2] - centre[2])
+  return steepness(first) > steepness(second)
+    ? { axial: first, equatorial: second }
+    : { axial: second, equatorial: first }
 }
 
 /**
@@ -264,6 +424,7 @@ const RADII = {
   N: { covalent: 0.71, vdw: 1.55 },
   O: { covalent: 0.66, vdw: 1.52 },
   F: { covalent: 0.57, vdw: 1.47 },
+  Si: { covalent: 1.11, vdw: 2.1 },
   P: { covalent: 1.07, vdw: 1.8 },
   S: { covalent: 1.05, vdw: 1.8 },
   Cl: { covalent: 1.02, vdw: 1.75 },
@@ -975,7 +1136,7 @@ const DEFINITIONS = [
       'Ordinary sulfur is built from S8 rings. The eight atoms alternate above and below the mean plane, forming a crown rather than a flat ring.',
     build() {
       const bond = 2.055
-      const { radius, height } = crown8(bond, 108.0)
+      const { radius, height } = puckeredRing(8, bond, 108.0)
       const atoms = Array.from({ length: 8 }, (_, i) => {
         const a = i * 45 * DEG
         return {
@@ -2001,6 +2162,3381 @@ const DEFINITIONS = [
       }
     },
     checks: { angles: [[0, 1, 2, 125.3], [1, 0, 5, 111.0], [1, 6, 7, 107.0]] },
+  },
+  // ---- 无机物（续二）----
+  {
+    id: 'h3po4',
+    formula: 'H3PO4',
+    name: 'Phosphoric acid',
+    nameZh: '磷酸',
+    category: 'inorganic',
+    shape: 'tetrahedral',
+    shapeZh: '四面体形',
+    summaryZh: '磷居四面体中心，一个 P=O 较短，三个 P—OH 较长，可分三级电离。',
+    summaryEn:
+      'Phosphorus sits at the centre of a tetrahedron with one short P=O and three longer P-OH bonds, ionising in three stages.',
+    build() {
+      const po = 1.48
+      const poh = 1.57
+      const oh = 0.98
+      const p = [0, 0, 0]
+      const [d1, d2, d3, d4] = TETRAHEDRON
+      const oDouble = add(p, mul(d1, po))
+      const hydroxyls = [d2, d3, d4].map((d) => add(p, mul(d, poh)))
+      return {
+        atoms: [
+          { element: 'P', position: p },
+          { element: 'O', position: oDouble },
+          ...hydroxyls.map((o) => ({ element: 'O', position: o })),
+          ...hydroxyls.map((o) => ({ element: 'H', position: branch(o, p, 108, oh, 0) })),
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 2, length: po },
+          { a: 0, b: 2, order: 1, length: poh },
+          { a: 0, b: 3, order: 1, length: poh },
+          { a: 0, b: 4, order: 1, length: poh },
+          { a: 2, b: 5, order: 1, length: oh },
+          { a: 3, b: 6, order: 1, length: oh },
+          { a: 4, b: 7, order: 1, length: oh },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 109.47], [2, 0, 5, 108]] },
+  },
+  {
+    id: 'n2h4',
+    formula: 'N2H4',
+    name: 'Hydrazine',
+    nameZh: '肼',
+    category: 'inorganic',
+    shape: 'gauche',
+    shapeZh: '邻位交叉形',
+    summaryZh: '两个氮上的孤对电子互相排斥，使分子扭成邻位交叉构象，而不是像乙烷那样简单交错。',
+    summaryEn:
+      'The lone pairs on the two nitrogens repel each other, twisting the molecule into a gauche shape rather than the simple staggering of ethane.',
+    build() {
+      const nn = 1.449
+      const nh = 1.021
+      const axis = [0, 0, 1]
+      const n1 = [0, 0, -nn / 2]
+      const n2 = [0, 0, nn / 2]
+      // 60.11° off the bisector reproduces the 107° H-N-H angle at 112° H-N-N.
+      const spread = 60.11
+      return {
+        atoms: [
+          { element: 'N', position: n1 },
+          { element: 'N', position: n2 },
+          { element: 'H', position: aroundAxis(n1, axis, 112, nh, -spread) },
+          { element: 'H', position: aroundAxis(n1, axis, 112, nh, spread) },
+          { element: 'H', position: aroundAxis(n2, axis, 180 - 112, nh, 91 - spread) },
+          { element: 'H', position: aroundAxis(n2, axis, 180 - 112, nh, 91 + spread) },
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 1, length: nn },
+          { a: 0, b: 2, order: 1, length: nh },
+          { a: 0, b: 3, order: 1, length: nh },
+          { a: 1, b: 4, order: 1, length: nh },
+          { a: 1, b: 5, order: 1, length: nh },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 112], [0, 2, 3, 107], [1, 0, 4, 112]] },
+  },
+  {
+    id: 'h2co3',
+    formula: 'H2CO3',
+    name: 'Carbonic acid',
+    nameZh: '碳酸',
+    category: 'inorganic',
+    shape: 'planar',
+    shapeZh: '平面三角形',
+    summaryZh: '二氧化碳溶于水生成的弱酸，极不稳定，一减压就分解回二氧化碳 —— 这就是汽水开盖冒泡的原因。',
+    summaryEn:
+      'The weak acid formed when CO2 dissolves in water. It is so unstable that releasing the pressure breaks it straight back into CO2 — the fizz when you open a bottle.',
+    build() {
+      const co = 1.2
+      const coh = 1.34
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const c = [0, 0, 0]
+      const oDouble = [0, co, 0]
+      const o1 = inPlane(c, oDouble, 125, coh, normal, 1)
+      const o2 = inPlane(c, oDouble, 125, coh, normal, -1)
+      return {
+        atoms: [
+          { element: 'C', position: c },
+          { element: 'O', position: oDouble },
+          { element: 'O', position: o1 },
+          { element: 'O', position: o2 },
+          { element: 'H', position: inPlane(o1, c, 107, oh, normal, 1) },
+          { element: 'H', position: inPlane(o2, c, 107, oh, normal, -1) },
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 2, length: co },
+          { a: 0, b: 2, order: 1, length: coh },
+          { a: 0, b: 3, order: 1, length: coh },
+          { a: 2, b: 4, order: 1, length: oh },
+          { a: 3, b: 5, order: 1, length: oh },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 125], [0, 2, 3, 110], [2, 0, 4, 107]], planar: true },
+  },
+  {
+    id: 'hclo',
+    formula: 'HClO',
+    name: 'Hypochlorous acid',
+    nameZh: '次氯酸',
+    category: 'inorganic',
+    shape: 'bent',
+    shapeZh: '角形',
+    summaryZh: '氯气溶于水生成的弱酸，才是漂白和消毒真正的活性成分 —— 中性分子能穿过细菌细胞膜。',
+    summaryEn:
+      'The weak acid formed when chlorine dissolves in water, and the species that actually bleaches and disinfects: being neutral, it can cross bacterial membranes.',
+    build() {
+      const ocl = 1.69
+      const oh = 0.975
+      const o = [0, 0, 0]
+      const cl = [0, 0, ocl]
+      return {
+        atoms: [
+          { element: 'O', position: o },
+          { element: 'Cl', position: cl },
+          { element: 'H', position: inPlane(o, cl, 103, oh, [0, 1, 0], 1) },
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 1, length: ocl },
+          { a: 0, b: 2, order: 1, length: oh },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 103]] },
+  },
+  {
+    id: 'sih4',
+    formula: 'SiH4',
+    name: 'Silane',
+    nameZh: '硅烷',
+    category: 'inorganic',
+    shape: 'tetrahedral',
+    shapeZh: '正四面体形',
+    summaryZh: '甲烷的硅类似物，但遇空气会自燃。芯片和太阳能电池的硅薄膜就是靠它气相沉积出来的。',
+    summaryEn:
+      'The silicon analogue of methane, but it ignites in air. Silicon films for chips and solar cells are deposited from it.',
+    build() {
+      const d = 1.48
+      const hs = place([0, 0, 0], TETRAHEDRON, d)
+      return {
+        atoms: [
+          { element: 'Si', position: [0, 0, 0] },
+          ...hs.map((p) => ({ element: 'H', position: p })),
+        ],
+        bonds: hs.map((_, i) => ({ a: 0, b: i + 1, order: 1, length: d })),
+      }
+    },
+    checks: { angles: [[0, 1, 2, 109.47]] },
+  },
+
+  // ---- 有机物（续二）----
+  {
+    id: 'hcooh',
+    formula: 'CH2O2',
+    formulaDisplayOverride: 'HCOOH',
+    name: 'Formic acid',
+    nameZh: '甲酸',
+    category: 'organic',
+    shape: 'planar',
+    shapeZh: '平面形',
+    summaryZh: '最简单的羧酸。蚂蚁叮咬和荨麻刺痛的灼热感就来自它 —— 拉丁语 formica 正是"蚂蚁"。',
+    summaryEn:
+      'The simplest carboxylic acid. The sting of ant bites and nettles comes from it — Latin formica means "ant".',
+    build() {
+      const co = 1.202
+      const coh = 1.343
+      const ch = 1.097
+      const oh = 0.972
+      const normal = [0, 0, 1]
+      const c = [0, 0, 0]
+      const oDouble = [co, 0, 0]
+      const oHydroxyl = inPlane(c, oDouble, 124.9, coh, normal, -1)
+      return {
+        atoms: [
+          { element: 'C', position: c },
+          { element: 'O', position: oDouble },
+          { element: 'O', position: oHydroxyl },
+          { element: 'H', position: inPlane(c, oDouble, 124.1, ch, normal, 1) },
+          { element: 'H', position: inPlane(oHydroxyl, c, 106.3, oh, normal, 1) },
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 2, length: co },
+          { a: 0, b: 2, order: 1, length: coh },
+          { a: 0, b: 3, order: 1, length: ch },
+          { a: 2, b: 4, order: 1, length: oh },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 124.9], [0, 1, 3, 124.1], [2, 0, 4, 106.3]], planar: true },
+  },
+  {
+    id: 'ethyleneglycol',
+    formula: 'C2H6O2',
+    name: 'Ethylene glycol',
+    nameZh: '乙二醇',
+    category: 'organic',
+    shape: 'chain',
+    shapeZh: '链形',
+    summaryZh: '两端各一个羟基，与水强烈氢键结合，能把冰点压到零下几十度 —— 汽车防冻液的主角。有甜味但剧毒。',
+    summaryEn:
+      'A hydroxyl at each end hydrogen-bonds strongly with water, pushing the freezing point tens of degrees below zero — the core of engine antifreeze. Sweet-tasting but highly toxic.',
+    build() {
+      const cc = 1.512
+      const co = 1.423
+      const ch = 1.09
+      const oh = 0.97
+      const axis = [0, 0, 1]
+      const c1 = [0, 0, -cc / 2]
+      const c2 = [0, 0, cc / 2]
+      // Anti conformer: the two hydroxyls sit on opposite sides of the C-C axis.
+      const o1 = aroundAxis(c1, axis, 110, co, 0)
+      const o2 = aroundAxis(c2, axis, 180 - 110, co, 180)
+      return {
+        atoms: [
+          { element: 'C', position: c1 },
+          { element: 'C', position: c2 },
+          { element: 'O', position: o1 },
+          { element: 'O', position: o2 },
+          ...completeSp3(c1, c2, o1, 108, ch).map((p) => ({ element: 'H', position: p })),
+          ...completeSp3(c2, c1, o2, 108, ch).map((p) => ({ element: 'H', position: p })),
+          { element: 'H', position: branch(o1, c1, 108, oh, 0) },
+          { element: 'H', position: branch(o2, c2, 108, oh, 0) },
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 1, length: cc },
+          { a: 0, b: 2, order: 1, length: co },
+          { a: 1, b: 3, order: 1, length: co },
+          { a: 0, b: 4, order: 1, length: ch },
+          { a: 0, b: 5, order: 1, length: ch },
+          { a: 1, b: 6, order: 1, length: ch },
+          { a: 1, b: 7, order: 1, length: ch },
+          { a: 2, b: 8, order: 1, length: oh },
+          { a: 3, b: 9, order: 1, length: oh },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 110], [0, 4, 5, 108]] },
+  },
+  {
+    id: 'glycerol',
+    formula: 'C3H8O3',
+    name: 'Glycerol',
+    nameZh: '甘油',
+    category: 'organic',
+    shape: 'chain',
+    shapeZh: '链形',
+    summaryZh: '三个羟基让它极其吸湿，是护肤品最常用的保湿剂；也是所有油脂（甘油三酯）的骨架。',
+    summaryEn:
+      'Three hydroxyls make it strongly water-attracting, the most common humectant in skincare — and the backbone of every fat and oil.',
+    build() {
+      const cc = 1.52
+      const co = 1.43
+      const ch = 1.09
+      const oh = 0.97
+      const c2 = [0, 0, 0]
+      const [c1, c3] = bent(c2, 112, cc)
+      // The middle carbon keeps one hydroxyl and one hydrogen.
+      const [oMiddle, hMiddle] = completeSp3(c2, c1, c3, 108, 1)
+      const oMid = add(c2, mul(norm(sub(oMiddle, c2)), co))
+      const hMid = add(c2, mul(norm(sub(hMiddle, c2)), ch))
+      // Each end carbon: one hydroxyl and two hydrogens.
+      const endGroup = (carbon) => {
+        const dirs = coneDirections(sub(carbon, c2), 3, TETRAHEDRAL_CONE, 0)
+        return {
+          o: add(carbon, mul(dirs[0], co)),
+          hs: [add(carbon, mul(dirs[1], ch)), add(carbon, mul(dirs[2], ch))],
+        }
+      }
+      const end1 = endGroup(c1)
+      const end3 = endGroup(c3)
+      return {
+        atoms: [
+          { element: 'C', position: c2 },
+          { element: 'C', position: c1 },
+          { element: 'C', position: c3 },
+          { element: 'O', position: oMid },
+          { element: 'O', position: end1.o },
+          { element: 'O', position: end3.o },
+          { element: 'H', position: hMid },
+          ...end1.hs.map((p) => ({ element: 'H', position: p })),
+          ...end3.hs.map((p) => ({ element: 'H', position: p })),
+          { element: 'H', position: branch(oMid, c2, 108, oh, 0) },
+          { element: 'H', position: branch(end1.o, c1, 108, oh, 0) },
+          { element: 'H', position: branch(end3.o, c3, 108, oh, 0) },
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 1, length: cc },
+          { a: 0, b: 2, order: 1, length: cc },
+          { a: 0, b: 3, order: 1, length: co },
+          { a: 1, b: 4, order: 1, length: co },
+          { a: 2, b: 5, order: 1, length: co },
+          { a: 0, b: 6, order: 1, length: ch },
+          { a: 1, b: 7, order: 1, length: ch },
+          { a: 1, b: 8, order: 1, length: ch },
+          { a: 2, b: 9, order: 1, length: ch },
+          { a: 2, b: 10, order: 1, length: ch },
+          { a: 3, b: 11, order: 1, length: oh },
+          { a: 4, b: 12, order: 1, length: oh },
+          { a: 5, b: 13, order: 1, length: oh },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 112]] },
+  },
+  {
+    id: 'diethylether',
+    formula: 'C4H10O',
+    formulaDisplayOverride: '(C2H5)2O',
+    name: 'Diethyl ether',
+    nameZh: '乙醚',
+    category: 'organic',
+    shape: 'bent',
+    shapeZh: '角形',
+    summaryZh: '1846 年首次公开演示乙醚麻醉，外科手术从此不再是酷刑。今天主要作萃取溶剂，极易燃。',
+    summaryEn:
+      'The 1846 public demonstration of ether anaesthesia ended surgery as an ordeal. Today it is mainly an extraction solvent, and extremely flammable.',
+    build() {
+      const co = 1.41
+      const cc = 1.52
+      const ch = 1.09
+      const o = [0, 0, 0]
+      const [ca, cb] = bent(o, 112, co)
+      const arm = (inner) => {
+        const dirs = coneDirections(sub(inner, o), 3, TETRAHEDRAL_CONE, 0)
+        return {
+          terminal: add(inner, mul(dirs[0], cc)),
+          hs: [add(inner, mul(dirs[1], ch)), add(inner, mul(dirs[2], ch))],
+        }
+      }
+      const armA = arm(ca)
+      const armB = arm(cb)
+      return {
+        atoms: [
+          { element: 'O', position: o },
+          { element: 'C', position: ca },
+          { element: 'C', position: cb },
+          { element: 'C', position: armA.terminal },
+          { element: 'C', position: armB.terminal },
+          ...armA.hs.map((p) => ({ element: 'H', position: p })),
+          ...armB.hs.map((p) => ({ element: 'H', position: p })),
+          ...methyl(armA.terminal, ca, ch).map((p) => ({ element: 'H', position: p })),
+          ...methyl(armB.terminal, cb, ch).map((p) => ({ element: 'H', position: p })),
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 1, length: co },
+          { a: 0, b: 2, order: 1, length: co },
+          { a: 1, b: 3, order: 1, length: cc },
+          { a: 2, b: 4, order: 1, length: cc },
+          { a: 1, b: 5, order: 1, length: ch },
+          { a: 1, b: 6, order: 1, length: ch },
+          { a: 2, b: 7, order: 1, length: ch },
+          { a: 2, b: 8, order: 1, length: ch },
+          { a: 3, b: 9, order: 1, length: ch },
+          { a: 3, b: 10, order: 1, length: ch },
+          { a: 3, b: 11, order: 1, length: ch },
+          { a: 4, b: 12, order: 1, length: ch },
+          { a: 4, b: 13, order: 1, length: ch },
+          { a: 4, b: 14, order: 1, length: ch },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 112]] },
+  },
+  {
+    id: 'ethylacetate',
+    formula: 'C4H8O2',
+    formulaDisplayOverride: 'CH3COOC2H5',
+    name: 'Ethyl acetate',
+    nameZh: '乙酸乙酯',
+    category: 'organic',
+    shape: 'planar-sp2',
+    shapeZh: '含平面酯基',
+    summaryZh: '洗甲水和白胶那股果香就是它。低毒又易挥发，是咖啡低因处理和油墨工业的常用溶剂。',
+    summaryEn:
+      'The fruity smell of nail-polish remover and white glue. Low in toxicity and quick to evaporate, it decaffeinates coffee and thins printing inks.',
+    build() {
+      const cc = 1.5
+      const co = 1.2
+      const cEster = 1.34
+      const oc = 1.44
+      const ch = 1.09
+      const normal = [0, 0, 1]
+      const carbonyl = [0, 0, 0]
+      const methylC = [-cc, 0, 0]
+      const oDouble = inPlane(carbonyl, methylC, 125.6, co, normal, 1)
+      const oEster = inPlane(carbonyl, methylC, 111.4, cEster, normal, -1)
+      const ch2 = inPlane(oEster, carbonyl, 116.4, oc, normal, -1)
+      const ch3End = add(ch2, mul(coneDirections(sub(ch2, oEster), 3, TETRAHEDRAL_CONE, 0)[0], cc))
+      const ch2Hs = completeSp3(ch2, oEster, ch3End, 108, ch)
+      return {
+        atoms: [
+          { element: 'C', position: carbonyl },
+          { element: 'C', position: methylC },
+          { element: 'O', position: oDouble },
+          { element: 'O', position: oEster },
+          { element: 'C', position: ch2 },
+          { element: 'C', position: ch3End },
+          ...methyl(methylC, carbonyl, ch).map((p) => ({ element: 'H', position: p })),
+          ...ch2Hs.map((p) => ({ element: 'H', position: p })),
+          ...methyl(ch3End, ch2, ch).map((p) => ({ element: 'H', position: p })),
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 1, length: cc },
+          { a: 0, b: 2, order: 2, length: co },
+          { a: 0, b: 3, order: 1, length: cEster },
+          { a: 3, b: 4, order: 1, length: oc },
+          { a: 4, b: 5, order: 1, length: cc },
+          { a: 1, b: 6, order: 1, length: ch },
+          { a: 1, b: 7, order: 1, length: ch },
+          { a: 1, b: 8, order: 1, length: ch },
+          { a: 4, b: 9, order: 1, length: ch },
+          { a: 4, b: 10, order: 1, length: ch },
+          { a: 5, b: 11, order: 1, length: ch },
+          { a: 5, b: 12, order: 1, length: ch },
+          { a: 5, b: 13, order: 1, length: ch },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 125.6], [3, 0, 4, 116.4]] },
+  },
+  {
+    id: 'lacticacid',
+    formula: 'C3H6O3',
+    name: 'Lactic acid',
+    nameZh: '乳酸',
+    category: 'organic',
+    shape: 'chain',
+    shapeZh: '链形',
+    summaryZh: '酸奶和泡菜的酸味来自它。肌肉剧烈运动时也会产生 —— 但现在认为它不是酸痛的原因，反而是备用燃料。',
+    summaryEn:
+      'It gives yoghurt and pickles their tang. Muscles make it during hard exercise — though it is now seen as spare fuel rather than the cause of soreness.',
+    build() {
+      const cc = 1.52
+      const co = 1.21
+      const coh = 1.34
+      const oh = 0.97
+      const ch = 1.09
+      const cAlphaO = 1.43
+      const normal = [0, 0, 1]
+      const carboxyl = [0, 0, 0]
+      const alpha = [-cc, 0, 0]
+      const oDouble = inPlane(carboxyl, alpha, 125, co, normal, 1)
+      const oAcid = inPlane(carboxyl, alpha, 112, coh, normal, -1)
+      const dirs = coneDirections(sub(alpha, carboxyl), 3, TETRAHEDRAL_CONE, 0)
+      const hydroxylO = add(alpha, mul(dirs[0], cAlphaO))
+      const methylC = add(alpha, mul(dirs[1], cc))
+      const alphaH = add(alpha, mul(dirs[2], ch))
+      return {
+        atoms: [
+          { element: 'C', position: carboxyl },
+          { element: 'C', position: alpha },
+          { element: 'O', position: oDouble },
+          { element: 'O', position: oAcid },
+          { element: 'O', position: hydroxylO },
+          { element: 'C', position: methylC },
+          { element: 'H', position: alphaH },
+          { element: 'H', position: inPlane(oAcid, carboxyl, 107, oh, normal, 1) },
+          { element: 'H', position: branch(hydroxylO, alpha, 108, oh, 0) },
+          ...methyl(methylC, alpha, ch).map((p) => ({ element: 'H', position: p })),
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 1, length: cc },
+          { a: 0, b: 2, order: 2, length: co },
+          { a: 0, b: 3, order: 1, length: coh },
+          { a: 1, b: 4, order: 1, length: cAlphaO },
+          { a: 1, b: 5, order: 1, length: cc },
+          { a: 1, b: 6, order: 1, length: ch },
+          { a: 3, b: 7, order: 1, length: oh },
+          { a: 4, b: 8, order: 1, length: oh },
+          { a: 5, b: 9, order: 1, length: ch },
+          { a: 5, b: 10, order: 1, length: ch },
+          { a: 5, b: 11, order: 1, length: ch },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 125], [1, 4, 5, 109.47]] },
+  },
+  {
+    id: 'alanine',
+    formula: 'C3H7NO2',
+    name: 'Alanine',
+    nameZh: '丙氨酸',
+    category: 'organic',
+    shape: 'chain',
+    shapeZh: '链形',
+    summaryZh: '第二简单的氨基酸。与甘氨酸只差一个甲基，但这个甲基让它有了手性 —— 生物体只用其中的 L 型。',
+    summaryEn:
+      'The second simplest amino acid: one methyl group more than glycine, and that group makes it chiral. Life uses only the L form.',
+    build() {
+      const cc = 1.52
+      const co = 1.21
+      const coh = 1.34
+      const cn = 1.47
+      const oh = 0.97
+      const ch = 1.09
+      const nh = 1.01
+      const normal = [0, 0, 1]
+      const carboxyl = [0, 0, 0]
+      const alpha = [-cc, 0, 0]
+      const oDouble = inPlane(carboxyl, alpha, 125, co, normal, 1)
+      const oAcid = inPlane(carboxyl, alpha, 112, coh, normal, -1)
+      const dirs = coneDirections(sub(alpha, carboxyl), 3, TETRAHEDRAL_CONE, 0)
+      const nitrogen = add(alpha, mul(dirs[0], cn))
+      const methylC = add(alpha, mul(dirs[1], cc))
+      const alphaH = add(alpha, mul(dirs[2], ch))
+      const amineHs = coneDirections(sub(nitrogen, alpha), 3, TETRAHEDRAL_CONE, 0)
+        .slice(0, 2)
+        .map((d) => add(nitrogen, mul(d, nh)))
+      return {
+        atoms: [
+          { element: 'C', position: carboxyl },
+          { element: 'C', position: alpha },
+          { element: 'O', position: oDouble },
+          { element: 'O', position: oAcid },
+          { element: 'N', position: nitrogen },
+          { element: 'C', position: methylC },
+          { element: 'H', position: alphaH },
+          { element: 'H', position: inPlane(oAcid, carboxyl, 107, oh, normal, 1) },
+          ...amineHs.map((p) => ({ element: 'H', position: p })),
+          ...methyl(methylC, alpha, ch).map((p) => ({ element: 'H', position: p })),
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 1, length: cc },
+          { a: 0, b: 2, order: 2, length: co },
+          { a: 0, b: 3, order: 1, length: coh },
+          { a: 1, b: 4, order: 1, length: cn },
+          { a: 1, b: 5, order: 1, length: cc },
+          { a: 1, b: 6, order: 1, length: ch },
+          { a: 3, b: 7, order: 1, length: oh },
+          { a: 4, b: 8, order: 1, length: nh },
+          { a: 4, b: 9, order: 1, length: nh },
+          { a: 5, b: 10, order: 1, length: ch },
+          { a: 5, b: 11, order: 1, length: ch },
+          { a: 5, b: 12, order: 1, length: ch },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 125], [1, 4, 5, 109.47]] },
+  },
+  {
+    id: 'vinylchloride',
+    formula: 'C2H3Cl',
+    name: 'Vinyl chloride',
+    nameZh: '氯乙烯',
+    category: 'organic',
+    shape: 'planar',
+    shapeZh: '平面形',
+    summaryZh: 'PVC 的单体：把千万个它首尾相连，就得到水管、地板和人造革。本身是确认的致癌物。',
+    summaryEn:
+      'The monomer of PVC: link millions of them end to end and you get pipes, flooring and synthetic leather. The monomer itself is a confirmed carcinogen.',
+    build() {
+      const cc = 1.332
+      const ccl = 1.726
+      const ch = 1.08
+      const normal = [0, 0, 1]
+      const c1 = [-cc / 2, 0, 0]
+      const c2 = [cc / 2, 0, 0]
+      return {
+        atoms: [
+          { element: 'C', position: c1 },
+          { element: 'C', position: c2 },
+          { element: 'Cl', position: inPlane(c1, c2, 122, ccl, normal, 1) },
+          { element: 'H', position: inPlane(c1, c2, 122, ch, normal, -1) },
+          { element: 'H', position: inPlane(c2, c1, 120, ch, normal, 1) },
+          { element: 'H', position: inPlane(c2, c1, 120, ch, normal, -1) },
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 2, length: cc },
+          { a: 0, b: 2, order: 1, length: ccl },
+          { a: 0, b: 3, order: 1, length: ch },
+          { a: 1, b: 4, order: 1, length: ch },
+          { a: 1, b: 5, order: 1, length: ch },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 122]], planar: true },
+  },
+  {
+    id: 'propene',
+    formula: 'C3H6',
+    name: 'Propene',
+    nameZh: '丙烯',
+    category: 'organic',
+    shape: 'planar-sp2',
+    shapeZh: '含平面双键',
+    summaryZh: '聚丙烯的单体，产量仅次于乙烯。保鲜盒、编织袋、口罩熔喷布和绝大多数塑料瓶盖都是聚丙烯。',
+    summaryEn:
+      'The monomer of polypropylene, second only to ethylene in output. Food containers, woven sacks, mask meltblown fabric and nearly every bottle cap are polypropylene.',
+    build() {
+      const cc2 = 1.336
+      const cc1 = 1.501
+      const ch = 1.09
+      const normal = [0, 0, 1]
+      const c1 = [-cc2 / 2, 0, 0]
+      const c2 = [cc2 / 2, 0, 0]
+      const c3 = inPlane(c2, c1, 124.3, cc1, normal, 1)
+      return {
+        atoms: [
+          { element: 'C', position: c1 },
+          { element: 'C', position: c2 },
+          { element: 'C', position: c3 },
+          { element: 'H', position: inPlane(c1, c2, 121, ch, normal, 1) },
+          { element: 'H', position: inPlane(c1, c2, 121, ch, normal, -1) },
+          { element: 'H', position: inPlane(c2, c1, 119, ch, normal, -1) },
+          ...methyl(c3, c2, ch).map((p) => ({ element: 'H', position: p })),
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 2, length: cc2 },
+          { a: 1, b: 2, order: 1, length: cc1 },
+          { a: 0, b: 3, order: 1, length: ch },
+          { a: 0, b: 4, order: 1, length: ch },
+          { a: 1, b: 5, order: 1, length: ch },
+          { a: 2, b: 6, order: 1, length: ch },
+          { a: 2, b: 7, order: 1, length: ch },
+          { a: 2, b: 8, order: 1, length: ch },
+        ],
+      }
+    },
+    checks: { angles: [[1, 0, 2, 124.3]] },
+  },
+  {
+    id: 'tetrafluoroethylene',
+    formula: 'C2F4',
+    name: 'Tetrafluoroethylene',
+    nameZh: '四氟乙烯',
+    category: 'organic',
+    shape: 'planar',
+    shapeZh: '平面形',
+    summaryZh: '聚合后就是聚四氟乙烯 —— 不粘锅涂层。氟原子把碳链严严实实裹住，几乎没有东西能粘附上去。',
+    summaryEn:
+      'Polymerised, it becomes PTFE — the non-stick coating. The fluorines wrap the carbon chain so completely that almost nothing can stick to it.',
+    build() {
+      const cc = 1.311
+      const cf = 1.319
+      const normal = [0, 0, 1]
+      const c1 = [-cc / 2, 0, 0]
+      const c2 = [cc / 2, 0, 0]
+      return {
+        atoms: [
+          { element: 'C', position: c1 },
+          { element: 'C', position: c2 },
+          { element: 'F', position: inPlane(c1, c2, 123.8, cf, normal, 1) },
+          { element: 'F', position: inPlane(c1, c2, 123.8, cf, normal, -1) },
+          { element: 'F', position: inPlane(c2, c1, 123.8, cf, normal, 1) },
+          { element: 'F', position: inPlane(c2, c1, 123.8, cf, normal, -1) },
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 2, length: cc },
+          { a: 0, b: 2, order: 1, length: cf },
+          { a: 0, b: 3, order: 1, length: cf },
+          { a: 1, b: 4, order: 1, length: cf },
+          { a: 1, b: 5, order: 1, length: cf },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 123.8], [0, 2, 3, 112.4]], planar: true },
+  },
+  {
+    id: 'styrene',
+    formula: 'C8H8',
+    name: 'Styrene',
+    nameZh: '苯乙烯',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 乙烯基',
+    summaryZh: '聚苯乙烯的单体。发泡后就是外卖餐盒和快递泡沫箱，透明硬质的则是一次性餐具和 CD 盒。',
+    summaryEn:
+      'The monomer of polystyrene: foamed it becomes takeaway boxes and packing foam, and as a clear rigid solid, disposable cutlery and CD cases.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cVinyl = 1.47
+      const cDouble = 1.331
+      const chVinyl = 1.08
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      const alpha = mul(norm(ringCarbons[0]), cc + cVinyl)
+      atoms.push({ element: 'C', position: alpha })
+      bonds.push({ a: 0, b: 6, order: 1, length: cVinyl })
+      const beta = inPlane(alpha, ringCarbons[0], 126, cDouble, normal, 1)
+      atoms.push({ element: 'C', position: beta })
+      bonds.push({ a: 6, b: 7, order: 2, length: cDouble })
+      atoms.push({ element: 'H', position: inPlane(alpha, ringCarbons[0], 116, chVinyl, normal, -1) })
+      bonds.push({ a: 6, b: 8, order: 1, length: chVinyl })
+      atoms.push({ element: 'H', position: inPlane(beta, alpha, 121, chVinyl, normal, 1) })
+      bonds.push({ a: 7, b: 9, order: 1, length: chVinyl })
+      atoms.push({ element: 'H', position: inPlane(beta, alpha, 121, chVinyl, normal, -1) })
+      bonds.push({ a: 7, b: 10, order: 1, length: chVinyl })
+      for (let i = 1; i < 6; i++) {
+        atoms.push({ element: 'H', position: mul(norm(ringCarbons[i]), cc + chRing) })
+        bonds.push({ a: i, b: atoms.length - 1, order: 1, length: chRing })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120], [6, 0, 7, 126]], planar: true },
+  },
+  {
+    id: 'cfc12',
+    formula: 'CCl2F2',
+    name: 'Dichlorodifluoromethane',
+    nameZh: '二氯二氟甲烷',
+    category: 'organic',
+    shape: 'tetrahedral',
+    shapeZh: '四面体形',
+    summaryZh: '曾经的"氟利昂-12"，无毒不燃，一度是完美的制冷剂 —— 直到人们发现它在平流层释放氯原子，撕开了臭氧空洞。',
+    summaryEn:
+      'Once "Freon-12": non-toxic, non-flammable and seemingly the perfect refrigerant — until it was found to release chlorine in the stratosphere and tear open the ozone hole.',
+    build() {
+      const ccl = 1.744
+      const cf = 1.345
+      const [d1, d2, d3, d4] = TETRAHEDRON
+      const c = [0, 0, 0]
+      return {
+        atoms: [
+          { element: 'C', position: c },
+          { element: 'Cl', position: add(c, mul(d1, ccl)) },
+          { element: 'Cl', position: add(c, mul(d2, ccl)) },
+          { element: 'F', position: add(c, mul(d3, cf)) },
+          { element: 'F', position: add(c, mul(d4, cf)) },
+        ],
+        bonds: [
+          { a: 0, b: 1, order: 1, length: ccl },
+          { a: 0, b: 2, order: 1, length: ccl },
+          { a: 0, b: 3, order: 1, length: cf },
+          { a: 0, b: 4, order: 1, length: cf },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 2, 109.47], [0, 3, 4, 109.47]] },
+  },
+  {
+    id: 'adenine',
+    formula: 'C5H5N5',
+    name: 'Adenine',
+    nameZh: '腺嘌呤',
+    category: 'organic',
+    shape: 'fused-rings',
+    shapeZh: '嘌呤并环',
+    idealized: true,
+    summaryZh: 'DNA 四种碱基之一（A），靠两个氢键与胸腺嘧啶配对；也是 ATP 的组成部分 —— 遗传与供能共用同一个骨架。',
+    summaryEn:
+      'One of DNA’s four bases (A), pairing with thymine through two hydrogen bonds; it is also part of ATP, so heredity and energy share one skeleton.',
+    build() {
+      const ring = 1.38
+      const ch = 1.08
+      const cn = 1.34
+      const nh = 1.01
+      const { shared, ringA, ringB } = fusedRings(ring, 6, 5)
+      // shared = C4, C5. ringA (six) = C4, C5, C6, N1, C2, N3.
+      // ringB (five) = C4, C5, N7, C8, N9.
+      const [c4, c5] = shared
+      const [, , c6, n1, c2, n3] = ringA
+      const [, , n7, c8, n9] = ringB
+      const sixCentre = [ringA.reduce((s, p) => s + p[0], 0) / 6, 0, 0]
+      const fiveCentre = [ringB.reduce((s, p) => s + p[0], 0) / 5, 0, 0]
+      const outward = (p, centre, distance) => add(p, mul(norm(sub(p, centre)), distance))
+      const amine = outward(c6, sixCentre, cn)
+      const atoms = [
+        { element: 'C', position: c4 },
+        { element: 'C', position: c5 },
+        { element: 'C', position: c6 },
+        { element: 'N', position: n1 },
+        { element: 'C', position: c2 },
+        { element: 'N', position: n3 },
+        { element: 'N', position: n7 },
+        { element: 'C', position: c8 },
+        { element: 'N', position: n9 },
+        { element: 'N', position: amine },
+        { element: 'H', position: outward(c2, sixCentre, ch) },
+        { element: 'H', position: outward(c8, fiveCentre, ch) },
+        { element: 'H', position: outward(n9, fiveCentre, nh) },
+        { element: 'H', position: inPlane(amine, c6, 120, nh, [0, 0, 1], 1) },
+        { element: 'H', position: inPlane(amine, c6, 120, nh, [0, 0, 1], -1) },
+      ]
+      return {
+        atoms,
+        bonds: [
+          { a: 0, b: 1, order: 1, length: ring },
+          { a: 1, b: 2, order: 1, length: ring },
+          { a: 2, b: 3, order: 2, length: ring },
+          { a: 3, b: 4, order: 1, length: ring },
+          { a: 4, b: 5, order: 2, length: ring },
+          { a: 5, b: 0, order: 1, length: ring },
+          { a: 1, b: 6, order: 2, length: ring },
+          { a: 6, b: 7, order: 1, length: ring },
+          { a: 7, b: 8, order: 2, length: ring },
+          { a: 8, b: 0, order: 1, length: ring },
+          { a: 2, b: 9, order: 1, length: cn },
+          { a: 4, b: 10, order: 1, length: ch },
+          { a: 7, b: 11, order: 1, length: ch },
+          { a: 8, b: 12, order: 1, length: nh },
+          { a: 9, b: 13, order: 1, length: nh },
+          { a: 9, b: 14, order: 1, length: nh },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 5, 120]], planar: true },
+  },
+  {
+    id: 'caffeine',
+    formula: 'C8H10N4O2',
+    name: 'Caffeine',
+    nameZh: '咖啡因',
+    category: 'organic',
+    shape: 'fused-rings',
+    shapeZh: '嘌呤并环',
+    idealized: true,
+    summaryZh:
+      '结构与腺苷相似，能占住大脑中的腺苷受体却不激活它 —— 于是"困了"的信号送不出去。这就是提神的原理。',
+    summaryEn:
+      'Shaped like adenosine, it occupies the brain’s adenosine receptors without activating them, so the "you are tired" signal never gets through. That is how it wakes you up.',
+    build() {
+      const ring = 1.38
+      const co = 1.22
+      const ncH3 = 1.47
+      const ch = 1.08
+      const chMethyl = 1.09
+      const { shared, ringA, ringB } = fusedRings(ring, 6, 5)
+      const [c4, c5] = shared
+      const [, , c6, n1, c2, n3] = ringA
+      const [, , n7, c8, n9] = ringB
+      const sixCentre = [ringA.reduce((s, p) => s + p[0], 0) / 6, 0, 0]
+      const fiveCentre = [ringB.reduce((s, p) => s + p[0], 0) / 5, 0, 0]
+      const outward = (p, centre, distance) => add(p, mul(norm(sub(p, centre)), distance))
+      const o6 = outward(c6, sixCentre, co)
+      const o2 = outward(c2, sixCentre, co)
+      const m1 = outward(n1, sixCentre, ncH3)
+      const m3 = outward(n3, sixCentre, ncH3)
+      const m7 = outward(n7, fiveCentre, ncH3)
+      const atoms = [
+        { element: 'C', position: c4 },
+        { element: 'C', position: c5 },
+        { element: 'C', position: c6 },
+        { element: 'N', position: n1 },
+        { element: 'C', position: c2 },
+        { element: 'N', position: n3 },
+        { element: 'N', position: n7 },
+        { element: 'C', position: c8 },
+        { element: 'N', position: n9 },
+        { element: 'O', position: o6 },
+        { element: 'O', position: o2 },
+        { element: 'C', position: m1 },
+        { element: 'C', position: m3 },
+        { element: 'C', position: m7 },
+        { element: 'H', position: outward(c8, fiveCentre, ch) },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 2, length: ring },
+        { a: 1, b: 2, order: 1, length: ring },
+        { a: 2, b: 3, order: 1, length: ring },
+        { a: 3, b: 4, order: 1, length: ring },
+        { a: 4, b: 5, order: 1, length: ring },
+        { a: 5, b: 0, order: 1, length: ring },
+        { a: 1, b: 6, order: 1, length: ring },
+        { a: 6, b: 7, order: 1, length: ring },
+        { a: 7, b: 8, order: 2, length: ring },
+        { a: 8, b: 0, order: 1, length: ring },
+        { a: 2, b: 9, order: 2, length: co },
+        { a: 4, b: 10, order: 2, length: co },
+        { a: 3, b: 11, order: 1, length: ncH3 },
+        { a: 5, b: 12, order: 1, length: ncH3 },
+        { a: 6, b: 13, order: 1, length: ncH3 },
+        { a: 7, b: 14, order: 1, length: ch },
+      ]
+      for (const [carbon, attached] of [
+        [11, n1],
+        [12, n3],
+        [13, n7],
+      ]) {
+        for (const h of methyl(atoms[carbon].position, attached, chMethyl)) {
+          atoms.push({ element: 'H', position: h })
+          bonds.push({ a: carbon, b: atoms.length - 1, order: 1, length: chMethyl })
+        }
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]] },
+  },
+  {
+    id: 'aspirin',
+    formula: 'C9H8O4',
+    name: 'Aspirin',
+    nameZh: '阿司匹林',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 酯 + 羧基',
+    idealized: true,
+    summaryZh:
+      '1897 年问世，至今仍是用量最大的药物之一。它不可逆地抑制环氧合酶，所以小剂量长期服用能抗血栓。',
+    summaryEn:
+      'Introduced in 1897 and still among the most-used drugs. It blocks cyclo-oxygenase irreversibly, which is why a small daily dose thins the blood.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cCarboxyl = 1.48
+      const co = 1.21
+      const coh = 1.34
+      const oh = 0.97
+      const cEsterO = 1.4
+      const esterC = 1.36
+      const acylO = 1.2
+      const acylC = 1.5
+      const chMethyl = 1.09
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      // Carboxyl on ring position 0.
+      const carboxylC = mul(norm(ringCarbons[0]), cc + cCarboxyl)
+      atoms.push({ element: 'C', position: carboxylC })
+      bonds.push({ a: 0, b: 6, order: 1, length: cCarboxyl })
+      const oDouble = inPlane(carboxylC, ringCarbons[0], 122, co, normal, 1)
+      const oAcid = inPlane(carboxylC, ringCarbons[0], 116, coh, normal, -1)
+      atoms.push({ element: 'O', position: oDouble })
+      bonds.push({ a: 6, b: 7, order: 2, length: co })
+      atoms.push({ element: 'O', position: oAcid })
+      bonds.push({ a: 6, b: 8, order: 1, length: coh })
+      atoms.push({ element: 'H', position: inPlane(oAcid, carboxylC, 107, oh, normal, -1) })
+      bonds.push({ a: 8, b: 9, order: 1, length: oh })
+      // Acetyl ester on the neighbouring ring position (ortho to the carboxyl).
+      // Its plane is taken perpendicular to the ring rather than coplanar with it:
+      // built flat, the acetyl oxygen collides with the carboxyl hydroxyl 0.17 A
+      // away. Real aspirin resolves the same strain the same way — the acetoxy
+      // group twists out of the ring plane.
+      const esterO = mul(norm(ringCarbons[1]), cc + cEsterO)
+      atoms.push({ element: 'O', position: esterO })
+      bonds.push({ a: 1, b: 10, order: 1, length: cEsterO })
+      const outOfPlane = cross(normal, norm(ringCarbons[1]))
+      const acylC2 = inPlane(esterO, ringCarbons[1], 118, esterC, outOfPlane, 1)
+      atoms.push({ element: 'C', position: acylC2 })
+      bonds.push({ a: 10, b: 11, order: 1, length: esterC })
+      atoms.push({ element: 'O', position: inPlane(acylC2, esterO, 124, acylO, outOfPlane, 1) })
+      bonds.push({ a: 11, b: 12, order: 2, length: acylO })
+      const methylC = inPlane(acylC2, esterO, 111, acylC, outOfPlane, -1)
+      atoms.push({ element: 'C', position: methylC })
+      bonds.push({ a: 11, b: 13, order: 1, length: acylC })
+      for (const h of methyl(methylC, acylC2, chMethyl)) {
+        atoms.push({ element: 'H', position: h })
+        bonds.push({ a: 13, b: atoms.length - 1, order: 1, length: chMethyl })
+      }
+      for (let i = 2; i < 6; i++) {
+        atoms.push({ element: 'H', position: mul(norm(ringCarbons[i]), cc + chRing) })
+        bonds.push({ a: i, b: atoms.length - 1, order: 1, length: chRing })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120], [6, 7, 8, 122]] },
+  },
+  {
+    id: 'paracetamol',
+    formula: 'C8H9NO2',
+    name: 'Paracetamol',
+    nameZh: '对乙酰氨基酚',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 羟基 + 酰胺',
+    idealized: true,
+    summaryZh:
+      '最常用的退烧止痛药（扑热息痛）。安全窗口窄 —— 过量会直接损伤肝脏，是急性肝衰竭最常见的药物性原因。',
+    summaryEn:
+      'The most widely used fever and pain reliever. Its safety margin is narrow: an overdose damages the liver directly and is the leading drug cause of acute liver failure.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const co = 1.375
+      const oh = 0.956
+      const cn = 1.41
+      const nh = 1.01
+      const nc = 1.35
+      const acylO = 1.23
+      const acylC = 1.5
+      const chMethyl = 1.09
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      // Hydroxyl on position 0, acetamido para to it on position 3.
+      const phenolO = mul(norm(ringCarbons[0]), cc + co)
+      atoms.push({ element: 'O', position: phenolO })
+      bonds.push({ a: 0, b: 6, order: 1, length: co })
+      atoms.push({ element: 'H', position: inPlane(phenolO, ringCarbons[0], 108.8, oh, normal, 1) })
+      bonds.push({ a: 6, b: 7, order: 1, length: oh })
+      const nitrogen = mul(norm(ringCarbons[3]), cc + cn)
+      atoms.push({ element: 'N', position: nitrogen })
+      bonds.push({ a: 3, b: 8, order: 1, length: cn })
+      atoms.push({ element: 'H', position: inPlane(nitrogen, ringCarbons[3], 118, nh, normal, -1) })
+      bonds.push({ a: 8, b: 9, order: 1, length: nh })
+      const acylC2 = inPlane(nitrogen, ringCarbons[3], 126, nc, normal, 1)
+      atoms.push({ element: 'C', position: acylC2 })
+      bonds.push({ a: 8, b: 10, order: 1, length: nc })
+      atoms.push({ element: 'O', position: inPlane(acylC2, nitrogen, 122, acylO, normal, 1) })
+      bonds.push({ a: 10, b: 11, order: 2, length: acylO })
+      const methylC = inPlane(acylC2, nitrogen, 115, acylC, normal, -1)
+      atoms.push({ element: 'C', position: methylC })
+      bonds.push({ a: 10, b: 12, order: 1, length: acylC })
+      for (const h of methyl(methylC, acylC2, chMethyl)) {
+        atoms.push({ element: 'H', position: h })
+        bonds.push({ a: 12, b: atoms.length - 1, order: 1, length: chMethyl })
+      }
+      for (const i of [1, 2, 4, 5]) {
+        atoms.push({ element: 'H', position: mul(norm(ringCarbons[i]), cc + chRing) })
+        bonds.push({ a: i, b: atoms.length - 1, order: 1, length: chRing })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120], [8, 3, 10, 126]] },
+  },
+  {
+    id: 'glucose',
+    formula: 'C6H12O6',
+    name: 'Glucose',
+    nameZh: '葡萄糖',
+    category: 'organic',
+    shape: 'chair-ring',
+    shapeZh: '椅式六元环',
+    idealized: true,
+    summaryZh:
+      '血糖就是它，也是细胞最直接的能量来源。β 型的所有羟基都处在平伏（equatorial）位置，这是它成为自然界最稳定糖类的原因。',
+    summaryEn:
+      'Blood sugar, and the most direct fuel a cell has. In the beta form every hydroxyl sits equatorial, which is why glucose is the most stable sugar in nature.',
+    build() {
+      const ringBond = 1.52
+      const co = 1.42
+      const ch = 1.09
+      const oh = 0.97
+      // Idealised symmetric chair; the ring oxygen therefore sits at the C-C distance.
+      const positions = puckeredRingPositions(6, ringBond, 111.5)
+      // Ring order: O5, C1, C2, C3, C4, C5.
+      const atoms = [
+        { element: 'O', position: positions[0] },
+        { element: 'C', position: positions[1] },
+        { element: 'C', position: positions[2] },
+        { element: 'C', position: positions[3] },
+        { element: 'C', position: positions[4] },
+        { element: 'C', position: positions[5] },
+      ]
+      const bonds = []
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: 1, length: ringBond })
+      }
+      // Every carbon takes a hydroxyl equatorial and a hydrogen axial — the
+      // all-equatorial arrangement that defines beta-D-glucose. C5 carries the
+      // CH2OH arm instead of a hydroxyl.
+      for (const index of [1, 2, 3, 4, 5]) {
+        const prev = positions[(index + 5) % 6]
+        const next = positions[(index + 1) % 6]
+        const { axial, equatorial } = axialEquatorial(positions[index], prev, next, 109.5, 1)
+        const centre = positions[index]
+        const along = (target, distance) =>
+          add(centre, mul(norm(sub(target, centre)), distance))
+
+        if (index === 5) {
+          const c6 = along(equatorial, ringBond)
+          atoms.push({ element: 'C', position: c6 })
+          bonds.push({ a: 5, b: atoms.length - 1, order: 1, length: ringBond })
+          const c6Index = atoms.length - 1
+          const dirs = coneDirections(sub(c6, centre), 3, TETRAHEDRAL_CONE, 0)
+          const o6 = add(c6, mul(dirs[0], co))
+          atoms.push({ element: 'O', position: o6 })
+          bonds.push({ a: c6Index, b: atoms.length - 1, order: 1, length: co })
+          const o6Index = atoms.length - 1
+          for (const d of dirs.slice(1)) {
+            atoms.push({ element: 'H', position: add(c6, mul(d, ch)) })
+            bonds.push({ a: c6Index, b: atoms.length - 1, order: 1, length: ch })
+          }
+          atoms.push({ element: 'H', position: branch(o6, c6, 108, oh, 0) })
+          bonds.push({ a: o6Index, b: atoms.length - 1, order: 1, length: oh })
+        } else {
+          const o = along(equatorial, co)
+          atoms.push({ element: 'O', position: o })
+          bonds.push({ a: index, b: atoms.length - 1, order: 1, length: co })
+          const oIndex = atoms.length - 1
+          atoms.push({ element: 'H', position: branch(o, centre, 108, oh, 0) })
+          bonds.push({ a: oIndex, b: atoms.length - 1, order: 1, length: oh })
+        }
+        atoms.push({ element: 'H', position: along(axial, ch) })
+        bonds.push({ a: index, b: atoms.length - 1, order: 1, length: ch })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[1, 0, 2, 111.5]] },
+  },
+
+  // ---- 生活中的其他分子 ----
+  {
+    id: 'h3bo3',
+    formula: 'H3BO3',
+    name: 'Boric acid',
+    nameZh: '硼酸',
+    category: 'inorganic',
+    shape: 'trigonal-planar',
+    shapeZh: '平面三角形',
+    summaryZh:
+      '完全平面的分子，三个羟基像风车一样绕硼排列。晶体里靠氢键连成片层，所以硼酸手感滑腻。',
+    summaryEn:
+      'A flat molecule with three hydroxyls arranged like a pinwheel around boron. In the crystal, hydrogen bonds link the molecules into sheets, which is why boric acid feels slippery.',
+    build() {
+      const bo = 1.365
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const oxygens = ring([0, 0, 0], 3, bo)
+      const atoms = [{ element: 'B', position: [0, 0, 0] }]
+      const bonds = []
+      oxygens.forEach((p, i) => {
+        atoms.push({ element: 'O', position: p })
+        bonds.push({ a: 0, b: i + 1, order: 1, length: bo })
+      })
+      // Same side every time, which is what makes the pinwheel.
+      oxygens.forEach((p, i) => {
+        atoms.push({ element: 'H', position: inPlane(p, [0, 0, 0], 114, oh, normal, 1) })
+        bonds.push({ a: i + 1, b: atoms.length - 1, order: 1, length: oh })
+      })
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 2, 120]], planar: true },
+  },
+  {
+    id: 'c4h10',
+    formula: 'C4H10',
+    name: 'Butane',
+    nameZh: '丁烷',
+    category: 'organic',
+    shape: 'zigzag-chain',
+    shapeZh: '锯齿链',
+    summaryZh:
+      '打火机里晃动的液体就是它 —— 常温下稍加压即可液化，松开阀门立刻汽化。图中是能量最低的反式构象。',
+    summaryEn:
+      'The liquid sloshing in a cigarette lighter: a little pressure liquefies it at room temperature and it flashes back to gas at the valve. Shown in its lowest-energy anti conformation.',
+    build() {
+      const cc = 1.531
+      const ch = 1.094
+      const chMiddle = 1.096
+      const [c1, c2, c3, c4] = planarChain([0, 0, 0], [cc, 0, 0], zigzagSteps(2, cc, 112.7))
+      const atoms = [
+        { element: 'C', position: c1 },
+        { element: 'C', position: c2 },
+        { element: 'C', position: c3 },
+        { element: 'C', position: c4 },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 1, length: cc },
+        { a: 1, b: 2, order: 1, length: cc },
+        { a: 2, b: 3, order: 1, length: cc },
+      ]
+      const addAll = (positions, from, length) => {
+        for (const p of positions) {
+          atoms.push({ element: 'H', position: p })
+          bonds.push({ a: from, b: atoms.length - 1, order: 1, length })
+        }
+      }
+      addAll(methyl(c1, c2, ch), 0, ch)
+      addAll(completeSp3(c2, c1, c3, 106.4, chMiddle), 1, chMiddle)
+      addAll(completeSp3(c3, c2, c4, 106.4, chMiddle), 2, chMiddle)
+      addAll(methyl(c4, c3, ch), 3, ch)
+      return { atoms, bonds }
+    },
+    checks: { angles: [[1, 0, 2, 112.7]] },
+  },
+  {
+    id: 'cyclohexane',
+    formula: 'C6H12',
+    name: 'Cyclohexane',
+    nameZh: '环己烷',
+    category: 'organic',
+    shape: 'chair',
+    shapeZh: '椅式',
+    summaryZh:
+      '六元环不是平面的：折成"椅式"后每个键角都回到 109.5°，完全没有张力。每个碳一个直立氢、一个平伏氢，转动模型就能看出两者的区别。',
+    summaryEn:
+      'The six-membered ring is not flat. Folded into a chair, every angle returns to 109.5° and the ring is strain-free; each carbon carries one axial and one equatorial hydrogen, easiest to tell apart by spinning the model.',
+    build() {
+      const cc = 1.536
+      const ch = 1.096
+      const positions = puckeredRingPositions(6, cc, 111.5)
+      const atoms = positions.map((p) => ({ element: 'C', position: p }))
+      const bonds = positions.map((_, i) => ({
+        a: i,
+        b: (i + 1) % 6,
+        order: 1,
+        length: cc,
+      }))
+      for (let i = 0; i < 6; i++) {
+        const { axial, equatorial } = axialEquatorial(
+          positions[i],
+          positions[(i + 5) % 6],
+          positions[(i + 1) % 6],
+          107.5,
+          ch,
+        )
+        for (const p of [axial, equatorial]) {
+          atoms.push({ element: 'H', position: p })
+          bonds.push({ a: i, b: atoms.length - 1, order: 1, length: ch })
+        }
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 111.5]] },
+  },
+  {
+    id: 'isopropanol',
+    formula: 'C3H8O',
+    formulaDisplayOverride: '(CH3)2CHOH',
+    name: 'Isopropanol',
+    nameZh: '异丙醇',
+    category: 'organic',
+    shape: 'tetrahedral',
+    shapeZh: '四面体中心',
+    summaryZh:
+      '医用酒精棉片里的消毒成分。羟基长在中间的碳上，比乙醇更油溶，擦拭电子元件不留水痕。',
+    summaryEn:
+      'The disinfectant in an alcohol wipe. With the hydroxyl on the middle carbon it dissolves oils better than ethanol and evaporates without leaving water marks.',
+    build() {
+      const cc = 1.523
+      const co = 1.432
+      const ch = 1.1
+      const chMethyl = 1.093
+      const oh = 0.97
+      const centre = [0, 0, 0]
+      const [dO, dC1, dC2, dH] = TETRAHEDRON
+      const o = mul(dO, co)
+      const m1 = mul(dC1, cc)
+      const m2 = mul(dC2, cc)
+      const atoms = [
+        { element: 'C', position: centre },
+        { element: 'O', position: o },
+        { element: 'C', position: m1 },
+        { element: 'C', position: m2 },
+        { element: 'H', position: mul(dH, ch) },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 1, length: co },
+        { a: 0, b: 2, order: 1, length: cc },
+        { a: 0, b: 3, order: 1, length: cc },
+        { a: 0, b: 4, order: 1, length: ch },
+      ]
+      atoms.push({ element: 'H', position: branch(o, centre, 108.5, oh, 0) })
+      bonds.push({ a: 1, b: atoms.length - 1, order: 1, length: oh })
+      for (const [index, position] of [
+        [2, m1],
+        [3, m2],
+      ]) {
+        for (const h of methyl(position, centre, chMethyl)) {
+          atoms.push({ element: 'H', position: h })
+          bonds.push({ a: index, b: atoms.length - 1, order: 1, length: chMethyl })
+        }
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 2, 3, 109.4712]] },
+  },
+  {
+    id: 'propyleneglycol',
+    formula: 'C3H8O2',
+    name: 'Propylene glycol',
+    nameZh: '丙二醇',
+    category: 'organic',
+    shape: 'zigzag-chain',
+    shapeZh: '锯齿链',
+    summaryZh:
+      '两个羟基让它极其吸水，又几乎无毒无味 —— 于是成了食品、化妆品和药品里最常见的保湿剂与溶剂。',
+    summaryEn:
+      'Two hydroxyls make it strongly water-attracting while staying almost tasteless and non-toxic, which is why it turns up as the humectant and solvent in food, cosmetics and medicines.',
+    build() {
+      const cc = 1.523
+      const co = 1.43
+      const ch = 1.096
+      const chMethyl = 1.093
+      const oh = 0.97
+      const [c1, c2, c3] = planarChain([0, 0, 0], [cc, 0, 0], zigzagSteps(1, cc, 112))
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+      const atoms = [
+        { element: 'C', position: c1 },
+        { element: 'C', position: c2 },
+        { element: 'C', position: c3 },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 1, length: cc },
+        { a: 1, b: 2, order: 1, length: cc },
+      ]
+      // C2 keeps a hydroxyl and a hydrogen; C3 keeps a hydroxyl and two hydrogens.
+      const [dirO2, dirH2] = completeSp3(c2, c1, c3, 108, 1)
+      const o2 = along(c2, dirO2, co)
+      atoms.push({ element: 'O', position: o2 })
+      bonds.push({ a: 1, b: 3, order: 1, length: co })
+      atoms.push({ element: 'H', position: along(c2, dirH2, ch) })
+      bonds.push({ a: 1, b: 4, order: 1, length: ch })
+      atoms.push({ element: 'H', position: branch(o2, c2, 108, oh, 180) })
+      bonds.push({ a: 3, b: 5, order: 1, length: oh })
+      const o3 = aroundAxis(c3, sub(c3, c2), 70.5288, co, 0)
+      atoms.push({ element: 'O', position: o3 })
+      bonds.push({ a: 2, b: 6, order: 1, length: co })
+      for (const p of completeSp3(c3, c2, o3, 108, ch)) {
+        atoms.push({ element: 'H', position: p })
+        bonds.push({ a: 2, b: atoms.length - 1, order: 1, length: ch })
+      }
+      atoms.push({ element: 'H', position: branch(o3, c3, 108, oh, 180) })
+      bonds.push({ a: 6, b: atoms.length - 1, order: 1, length: oh })
+      for (const h of methyl(c1, c2, chMethyl)) {
+        atoms.push({ element: 'H', position: h })
+        bonds.push({ a: 0, b: atoms.length - 1, order: 1, length: chMethyl })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[1, 0, 2, 112]] },
+  },
+  {
+    id: 'r134a',
+    formula: 'C2H2F4',
+    formulaDisplayOverride: 'CF3CH2F',
+    name: '1,1,1,2-Tetrafluoroethane',
+    nameZh: '四氟乙烷',
+    category: 'organic',
+    shape: 'staggered',
+    shapeZh: '交错构象',
+    summaryZh:
+      '冰箱和汽车空调里的制冷剂 R-134a。它不含氯，不再破坏臭氧层，但仍是很强的温室气体，正逐步被替代。',
+    summaryEn:
+      'Refrigerant R-134a, in fridges and car air conditioning. Having no chlorine it spares the ozone layer, but it is still a potent greenhouse gas and is being phased down.',
+    build() {
+      const cc = 1.52
+      const cf = 1.34
+      const cfSingle = 1.37
+      const ch = 1.09
+      const c1 = [0, 0, 0]
+      const c2 = [cc, 0, 0]
+      const axis = sub(c2, c1)
+      const atoms = [
+        { element: 'C', position: c1 },
+        { element: 'C', position: c2 },
+      ]
+      const bonds = [{ a: 0, b: 1, order: 1, length: cc }]
+      // Both ends share one axis frame, so the 60 degree offset is a real
+      // staggered conformation rather than whichever way each frame fell.
+      for (const d of coneDirections(axis, 3, 180 - TETRAHEDRAL_CONE, 0)) {
+        atoms.push({ element: 'F', position: add(c1, mul(d, cf)) })
+        bonds.push({ a: 0, b: atoms.length - 1, order: 1, length: cf })
+      }
+      const far = coneDirections(axis, 3, TETRAHEDRAL_CONE, 60)
+      atoms.push({ element: 'F', position: add(c2, mul(far[0], cfSingle)) })
+      bonds.push({ a: 1, b: atoms.length - 1, order: 1, length: cfSingle })
+      for (const d of far.slice(1)) {
+        atoms.push({ element: 'H', position: add(c2, mul(d, ch)) })
+        bonds.push({ a: 1, b: atoms.length - 1, order: 1, length: ch })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 2, 3, 109.4712]] },
+  },
+  {
+    id: 'butadiene',
+    formula: 'C4H6',
+    name: '1,3-Butadiene',
+    nameZh: '1,3-丁二烯',
+    category: 'organic',
+    shape: 'planar-chain',
+    shapeZh: '平面共轭链',
+    summaryZh:
+      '两个双键隔着一个单键共轭，整个分子被拉成平面。它是合成橡胶的第一原料 —— 轮胎的分子起点。',
+    summaryEn:
+      'Two double bonds conjugated across a single bond, which flattens the whole molecule. It is the first feedstock of synthetic rubber — where a tyre begins.',
+    build() {
+      const cd = 1.341
+      const cs = 1.463
+      const ch = 1.09
+      const normal = [0, 0, 1]
+      const c2 = [0, 0, 0]
+      const c3 = [cs, 0, 0]
+      const c1 = inPlane(c2, c3, 122.9, cd, normal, 1)
+      const c4 = inPlane(c3, c2, 122.9, cd, normal, -1)
+      const atoms = [
+        { element: 'C', position: c1 },
+        { element: 'C', position: c2 },
+        { element: 'C', position: c3 },
+        { element: 'C', position: c4 },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 2, length: cd },
+        { a: 1, b: 2, order: 1, length: cs },
+        { a: 2, b: 3, order: 2, length: cd },
+      ]
+      const addH = (position, from, side, reference, angle) => {
+        atoms.push({ element: 'H', position: inPlane(position, reference, angle, ch, normal, side) })
+        bonds.push({ a: from, b: atoms.length - 1, order: 1, length: ch })
+      }
+      addH(c1, 0, 1, c2, 121.5)
+      addH(c1, 0, -1, c2, 121.5)
+      addH(c2, 1, -1, c3, 119)
+      addH(c4, 3, -1, c3, 121.5)
+      addH(c4, 3, 1, c3, 121.5)
+      addH(c3, 2, 1, c2, 119)
+      return { atoms, bonds }
+    },
+    checks: { angles: [[1, 0, 2, 122.9]], planar: true },
+  },
+  {
+    id: 'isoprene',
+    formula: 'C5H8',
+    name: 'Isoprene',
+    nameZh: '异戊二烯',
+    category: 'organic',
+    shape: 'planar-chain',
+    shapeZh: '共轭链 + 甲基',
+    summaryZh:
+      '天然橡胶就是几千个异戊二烯首尾相连的长链。植物每年向大气释放数亿吨异戊二烯，夏日树林里的清香有它一份。',
+    summaryEn:
+      'Natural rubber is thousands of isoprene units linked head to tail. Plants release hundreds of millions of tonnes of it a year — part of the smell of a wood in summer.',
+    build() {
+      const cd = 1.341
+      const cs = 1.463
+      const cMethyl = 1.51
+      const ch = 1.09
+      const chMethyl = 1.093
+      const normal = [0, 0, 1]
+      const c2 = [0, 0, 0]
+      const c3 = [cs, 0, 0]
+      const c1 = inPlane(c2, c3, 122.9, cd, normal, 1)
+      const c4 = inPlane(c3, c2, 122.9, cd, normal, -1)
+      const methylC = inPlane(c2, c3, 117, cMethyl, normal, -1)
+      const atoms = [
+        { element: 'C', position: c1 },
+        { element: 'C', position: c2 },
+        { element: 'C', position: c3 },
+        { element: 'C', position: c4 },
+        { element: 'C', position: methylC },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 2, length: cd },
+        { a: 1, b: 2, order: 1, length: cs },
+        { a: 2, b: 3, order: 2, length: cd },
+        { a: 1, b: 4, order: 1, length: cMethyl },
+      ]
+      const addH = (position, from, side, reference, angle) => {
+        atoms.push({ element: 'H', position: inPlane(position, reference, angle, ch, normal, side) })
+        bonds.push({ a: from, b: atoms.length - 1, order: 1, length: ch })
+      }
+      addH(c1, 0, 1, c2, 121.5)
+      addH(c1, 0, -1, c2, 121.5)
+      addH(c4, 3, -1, c3, 121.5)
+      addH(c4, 3, 1, c3, 121.5)
+      addH(c3, 2, 1, c2, 119)
+      for (const h of methyl(methylC, c2, chMethyl)) {
+        atoms.push({ element: 'H', position: h })
+        bonds.push({ a: 4, b: atoms.length - 1, order: 1, length: chMethyl })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[1, 0, 2, 122.9]] },
+  },
+  {
+    id: 'benzoicacid',
+    formula: 'C7H6O2',
+    formulaDisplayOverride: 'C6H5COOH',
+    name: 'Benzoic acid',
+    nameZh: '苯甲酸',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 羧基',
+    idealized: true,
+    summaryZh:
+      '最常用的食品防腐剂之一（常以苯甲酸钠的形式加入）。它在酸性饮料里才有效，因为只有未电离的分子能钻进霉菌细胞。',
+    summaryEn:
+      'One of the most common food preservatives, usually added as sodium benzoate. It only works in acidic drinks, because only the un-ionised molecule can get inside a mould cell.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cCarboxyl = 1.484
+      const co = 1.216
+      const coh = 1.33
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      const carboxylC = mul(norm(ringCarbons[0]), cc + cCarboxyl)
+      atoms.push({ element: 'C', position: carboxylC })
+      bonds.push({ a: 0, b: 6, order: 1, length: cCarboxyl })
+      atoms.push({ element: 'O', position: inPlane(carboxylC, ringCarbons[0], 122, co, normal, 1) })
+      bonds.push({ a: 6, b: 7, order: 2, length: co })
+      const oAcid = inPlane(carboxylC, ringCarbons[0], 116, coh, normal, -1)
+      atoms.push({ element: 'O', position: oAcid })
+      bonds.push({ a: 6, b: 8, order: 1, length: coh })
+      atoms.push({ element: 'H', position: inPlane(oAcid, carboxylC, 107, oh, normal, -1) })
+      bonds.push({ a: 8, b: 9, order: 1, length: oh })
+      for (let i = 1; i < 6; i++) {
+        atoms.push({ element: 'H', position: mul(norm(ringCarbons[i]), cc + chRing) })
+        bonds.push({ a: i, b: atoms.length - 1, order: 1, length: chRing })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]], planar: true },
+  },
+  {
+    id: 'terephthalicacid',
+    formula: 'C8H6O4',
+    name: 'Terephthalic acid',
+    nameZh: '对苯二甲酸',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 两个羧基',
+    idealized: true,
+    summaryZh:
+      '两个羧基分处苯环两端，正好首尾相接聚合成长链 —— 这就是 PET：矿泉水瓶、涤纶衣服和食品托盘的分子骨架。',
+    summaryEn:
+      'A carboxyl at each end of the ring, so the molecules polymerise head to tail into long chains. That polymer is PET: water bottles, polyester clothing and food trays.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cCarboxyl = 1.484
+      const co = 1.216
+      const coh = 1.33
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      for (const index of [0, 3]) {
+        const anchor = ringCarbons[index]
+        const carboxylC = mul(norm(anchor), cc + cCarboxyl)
+        atoms.push({ element: 'C', position: carboxylC })
+        const cIndex = atoms.length - 1
+        bonds.push({ a: index, b: cIndex, order: 1, length: cCarboxyl })
+        atoms.push({ element: 'O', position: inPlane(carboxylC, anchor, 122, co, normal, 1) })
+        bonds.push({ a: cIndex, b: atoms.length - 1, order: 2, length: co })
+        const oAcid = inPlane(carboxylC, anchor, 116, coh, normal, -1)
+        atoms.push({ element: 'O', position: oAcid })
+        const oIndex = atoms.length - 1
+        bonds.push({ a: cIndex, b: oIndex, order: 1, length: coh })
+        atoms.push({ element: 'H', position: inPlane(oAcid, carboxylC, 107, oh, normal, -1) })
+        bonds.push({ a: oIndex, b: atoms.length - 1, order: 1, length: oh })
+      }
+      for (const index of [1, 2, 4, 5]) {
+        atoms.push({ element: 'H', position: mul(norm(ringCarbons[index]), cc + chRing) })
+        bonds.push({ a: index, b: atoms.length - 1, order: 1, length: chRing })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]], planar: true },
+  },
+  {
+    id: 'salicylicacid',
+    formula: 'C7H6O3',
+    name: 'Salicylic acid',
+    nameZh: '水杨酸',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 羧基 + 羟基',
+    idealized: true,
+    summaryZh:
+      '羟基与羧基相邻，酚羟基的氢正好指向羰基氧，形成分子内氢键 —— 这也是它偏酸、脂溶性强、能钻进毛孔的原因。柳树皮镇痛的成分就是它。',
+    summaryEn:
+      'The hydroxyl sits next to the carboxyl, and its hydrogen points straight at the carbonyl oxygen, forming an internal hydrogen bond. That is why it is acidic, fat-soluble and able to get into a pore. It is the painkiller in willow bark.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cCarboxyl = 1.484
+      const co = 1.216
+      const coh = 1.33
+      const cPhenolO = 1.36
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      // The carbonyl is turned towards ring position 1, where the hydroxyl sits.
+      const carboxylC = mul(norm(ringCarbons[0]), cc + cCarboxyl)
+      atoms.push({ element: 'C', position: carboxylC })
+      bonds.push({ a: 0, b: 6, order: 1, length: cCarboxyl })
+      atoms.push({ element: 'O', position: inPlane(carboxylC, ringCarbons[0], 122, co, normal, -1) })
+      bonds.push({ a: 6, b: 7, order: 2, length: co })
+      const oAcid = inPlane(carboxylC, ringCarbons[0], 116, coh, normal, 1)
+      atoms.push({ element: 'O', position: oAcid })
+      bonds.push({ a: 6, b: 8, order: 1, length: coh })
+      atoms.push({ element: 'H', position: inPlane(oAcid, carboxylC, 107, oh, normal, 1) })
+      bonds.push({ a: 8, b: 9, order: 1, length: oh })
+      const phenolO = mul(norm(ringCarbons[1]), cc + cPhenolO)
+      atoms.push({ element: 'O', position: phenolO })
+      bonds.push({ a: 1, b: 10, order: 1, length: cPhenolO })
+      // Aimed at the carbonyl oxygen: the intramolecular hydrogen bond.
+      atoms.push({ element: 'H', position: inPlane(phenolO, ringCarbons[1], 107, oh, normal, 1) })
+      bonds.push({ a: 10, b: 11, order: 1, length: oh })
+      for (let i = 2; i < 6; i++) {
+        atoms.push({ element: 'H', position: mul(norm(ringCarbons[i]), cc + chRing) })
+        bonds.push({ a: i, b: atoms.length - 1, order: 1, length: chRing })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]], planar: true },
+  },
+  {
+    id: 'methylsalicylate',
+    formula: 'C8H8O3',
+    name: 'Methyl salicylate',
+    nameZh: '水杨酸甲酯',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 酯 + 羟基',
+    idealized: true,
+    summaryZh:
+      '冬青油的主要成分，风油精、清凉油和肌肉贴布那股穿透性的气味就来自它。皮肤吸收后水解成水杨酸消炎。',
+    summaryEn:
+      'The main component of oil of wintergreen — the piercing smell of muscle rubs and medicated patches. Absorbed through the skin, it hydrolyses back to salicylic acid.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cCarboxyl = 1.484
+      const co = 1.21
+      const cEsterO = 1.34
+      const oMethyl = 1.44
+      const chMethyl = 1.09
+      const cPhenolO = 1.36
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      const esterC = mul(norm(ringCarbons[0]), cc + cCarboxyl)
+      atoms.push({ element: 'C', position: esterC })
+      bonds.push({ a: 0, b: 6, order: 1, length: cCarboxyl })
+      atoms.push({ element: 'O', position: inPlane(esterC, ringCarbons[0], 122, co, normal, -1) })
+      bonds.push({ a: 6, b: 7, order: 2, length: co })
+      const esterO = inPlane(esterC, ringCarbons[0], 116, cEsterO, normal, 1)
+      atoms.push({ element: 'O', position: esterO })
+      bonds.push({ a: 6, b: 8, order: 1, length: cEsterO })
+      // Pointed away from the ring; turned the other way the methyl runs into the
+      // ortho hydrogen.
+      const methylC = inPlane(esterO, esterC, 116, oMethyl, normal, -1)
+      atoms.push({ element: 'C', position: methylC })
+      bonds.push({ a: 8, b: 9, order: 1, length: oMethyl })
+      for (const h of methyl(methylC, esterO, chMethyl)) {
+        atoms.push({ element: 'H', position: h })
+        bonds.push({ a: 9, b: atoms.length - 1, order: 1, length: chMethyl })
+      }
+      const phenolO = mul(norm(ringCarbons[1]), cc + cPhenolO)
+      atoms.push({ element: 'O', position: phenolO })
+      const phenolIndex = atoms.length - 1
+      bonds.push({ a: 1, b: phenolIndex, order: 1, length: cPhenolO })
+      atoms.push({ element: 'H', position: inPlane(phenolO, ringCarbons[1], 107, oh, normal, 1) })
+      bonds.push({ a: phenolIndex, b: atoms.length - 1, order: 1, length: oh })
+      for (let i = 2; i < 6; i++) {
+        atoms.push({ element: 'H', position: mul(norm(ringCarbons[i]), cc + chRing) })
+        bonds.push({ a: i, b: atoms.length - 1, order: 1, length: chRing })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]] },
+  },
+  {
+    id: 'vanillin',
+    formula: 'C8H8O3',
+    name: 'Vanillin',
+    nameZh: '香草醛',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 醛基',
+    idealized: true,
+    summaryZh:
+      '香草味的来源。天然香草荚里含量不到 2%，价格昂贵，因此市售香草味绝大多数是人工合成的同一个分子 —— 分子层面并无区别。',
+    summaryEn:
+      'The smell of vanilla. A natural pod is under 2% vanillin and costly, so almost all vanilla flavour is the synthetic version of exactly the same molecule — chemically indistinguishable.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cAldehyde = 1.47
+      const co = 1.21
+      const aldehydeH = 1.11
+      const cPhenolO = 1.36
+      const cMethoxyO = 1.37
+      const oMethyl = 1.43
+      const chMethyl = 1.09
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      // Aldehyde on 0, methoxy on 2, hydroxyl on 3: 4-hydroxy-3-methoxybenzaldehyde.
+      const aldehydeC = mul(norm(ringCarbons[0]), cc + cAldehyde)
+      atoms.push({ element: 'C', position: aldehydeC })
+      bonds.push({ a: 0, b: 6, order: 1, length: cAldehyde })
+      atoms.push({ element: 'O', position: inPlane(aldehydeC, ringCarbons[0], 124, co, normal, 1) })
+      bonds.push({ a: 6, b: 7, order: 2, length: co })
+      atoms.push({
+        element: 'H',
+        position: inPlane(aldehydeC, ringCarbons[0], 115, aldehydeH, normal, -1),
+      })
+      bonds.push({ a: 6, b: 8, order: 1, length: aldehydeH })
+      const methoxyO = mul(norm(ringCarbons[2]), cc + cMethoxyO)
+      atoms.push({ element: 'O', position: methoxyO })
+      bonds.push({ a: 2, b: 9, order: 1, length: cMethoxyO })
+      // Turned away from the neighbouring hydroxyl on ring position 3.
+      const methylC = inPlane(methoxyO, ringCarbons[2], 118, oMethyl, normal, -1)
+      atoms.push({ element: 'C', position: methylC })
+      bonds.push({ a: 9, b: 10, order: 1, length: oMethyl })
+      for (const h of methyl(methylC, methoxyO, chMethyl)) {
+        atoms.push({ element: 'H', position: h })
+        bonds.push({ a: 10, b: atoms.length - 1, order: 1, length: chMethyl })
+      }
+      const phenolO = mul(norm(ringCarbons[3]), cc + cPhenolO)
+      atoms.push({ element: 'O', position: phenolO })
+      const phenolIndex = atoms.length - 1
+      bonds.push({ a: 3, b: phenolIndex, order: 1, length: cPhenolO })
+      atoms.push({ element: 'H', position: inPlane(phenolO, ringCarbons[3], 108, oh, normal, -1) })
+      bonds.push({ a: phenolIndex, b: atoms.length - 1, order: 1, length: oh })
+      for (const index of [1, 4, 5]) {
+        atoms.push({ element: 'H', position: mul(norm(ringCarbons[index]), cc + chRing) })
+        bonds.push({ a: index, b: atoms.length - 1, order: 1, length: chRing })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]] },
+  },
+  {
+    id: 'cinnamaldehyde',
+    formula: 'C9H8O',
+    name: 'Cinnamaldehyde',
+    nameZh: '肉桂醛',
+    category: 'organic',
+    shape: 'planar-chain',
+    shapeZh: '苯环 + 共轭链',
+    idealized: true,
+    summaryZh:
+      '肉桂皮里约 90% 的挥发油都是它，桂皮和肉桂卷的味道就来自这一个分子。苯环与醛基之间的共轭双键让它显淡黄色。',
+    summaryEn:
+      'About 90% of the essential oil in cinnamon bark, and the entire smell of a cinnamon roll. The double bond conjugating the ring with the aldehyde is what gives it a pale yellow colour.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cVinyl = 1.467
+      const cd = 1.34
+      const cAldehyde = 1.47
+      const co = 1.21
+      const ch = 1.09
+      const aldehydeH = 1.11
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      const alpha = mul(norm(ringCarbons[0]), cc + cVinyl)
+      const beta = inPlane(alpha, ringCarbons[0], 126, cd, normal, 1)
+      const aldehydeC = inPlane(beta, alpha, 122, cAldehyde, normal, -1)
+      atoms.push({ element: 'C', position: alpha })
+      bonds.push({ a: 0, b: 6, order: 1, length: cVinyl })
+      atoms.push({ element: 'C', position: beta })
+      bonds.push({ a: 6, b: 7, order: 2, length: cd })
+      atoms.push({ element: 'C', position: aldehydeC })
+      bonds.push({ a: 7, b: 8, order: 1, length: cAldehyde })
+      atoms.push({ element: 'O', position: inPlane(aldehydeC, beta, 124, co, normal, 1) })
+      bonds.push({ a: 8, b: 9, order: 2, length: co })
+      atoms.push({ element: 'H', position: inPlane(aldehydeC, beta, 115, aldehydeH, normal, -1) })
+      bonds.push({ a: 8, b: 10, order: 1, length: aldehydeH })
+      atoms.push({ element: 'H', position: inPlane(alpha, ringCarbons[0], 118, ch, normal, -1) })
+      bonds.push({ a: 6, b: 11, order: 1, length: ch })
+      atoms.push({ element: 'H', position: inPlane(beta, alpha, 119, ch, normal, 1) })
+      bonds.push({ a: 7, b: 12, order: 1, length: ch })
+      for (let i = 1; i < 6; i++) {
+        atoms.push({ element: 'H', position: mul(norm(ringCarbons[i]), cc + chRing) })
+        bonds.push({ a: i, b: atoms.length - 1, order: 1, length: chRing })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]], planar: true },
+  },
+  {
+    id: 'oxalicacid',
+    formula: 'C2H2O4',
+    formulaDisplayOverride: 'HOOCCOOH',
+    name: 'Oxalic acid',
+    nameZh: '草酸',
+    category: 'organic',
+    shape: 'planar',
+    shapeZh: '平面',
+    summaryZh:
+      '最简单的二元羧酸，两个羧基直接相连。菠菜、苦瓜、茶叶里的涩味有它一份；它与钙结合成难溶的草酸钙，正是常见肾结石的成分。',
+    summaryEn:
+      'The simplest dicarboxylic acid — two carboxyls bonded straight together. It contributes the astringency of spinach and tea, and with calcium it forms the insoluble oxalate of the commonest kidney stones.',
+    build() {
+      const cc = 1.544
+      const co = 1.208
+      const coh = 1.32
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const c1 = [0, 0, 0]
+      const c2 = [cc, 0, 0]
+      const atoms = [
+        { element: 'C', position: c1 },
+        { element: 'C', position: c2 },
+      ]
+      const bonds = [{ a: 0, b: 1, order: 1, length: cc }]
+      // Same construction at each end; because the reference direction reverses,
+      // the two carboxyls come out anti to each other, as in the crystal.
+      for (const [index, centre, anchor] of [
+        [0, c1, c2],
+        [1, c2, c1],
+      ]) {
+        atoms.push({ element: 'O', position: inPlane(centre, anchor, 123, co, normal, 1) })
+        bonds.push({ a: index, b: atoms.length - 1, order: 2, length: co })
+        const oAcid = inPlane(centre, anchor, 112, coh, normal, -1)
+        atoms.push({ element: 'O', position: oAcid })
+        const oIndex = atoms.length - 1
+        bonds.push({ a: index, b: oIndex, order: 1, length: coh })
+        atoms.push({ element: 'H', position: inPlane(oAcid, centre, 106, oh, normal, -1) })
+        bonds.push({ a: oIndex, b: atoms.length - 1, order: 1, length: oh })
+      }
+      return { atoms, bonds }
+    },
+    checks: { planar: true },
+  },
+  {
+    id: 'citricacid',
+    formula: 'C6H8O7',
+    name: 'Citric acid',
+    nameZh: '柠檬酸',
+    category: 'organic',
+    shape: 'branched',
+    shapeZh: '三羧基支链',
+    summaryZh:
+      '三个羧基加一个羟基，酸得干脆又能牢牢抓住金属离子。柠檬的酸味、汽水的酸味调节剂、除水垢的清洁剂都是它；细胞里的柠檬酸循环也以它命名。',
+    summaryEn:
+      'Three carboxyls plus a hydroxyl: sharply sour, and a firm grip on metal ions. It is the tang of a lemon, the acidity regulator in fizzy drinks and the descaler under the sink — and the citric acid cycle in your cells is named after it.',
+    build() {
+      const cc = 1.53
+      const cCarboxyl = 1.52
+      const co = 1.21
+      const coh = 1.32
+      const cOH = 1.42
+      const ch = 1.09
+      const oh = 0.97
+      const centre = [0, 0, 0]
+      const [dHydroxyl, dCarboxyl, dArmA, dArmB] = TETRAHEDRON
+      const atoms = [{ element: 'C', position: centre }]
+      const bonds = []
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      /** A -COOH on `carbon`, opened out around the bond back to `anchor`. */
+      const carboxyl = (carbonIndex, anchor) => {
+        const carbon = atoms[carbonIndex].position
+        const axis = sub(carbon, anchor)
+        push('O', aroundAxis(carbon, axis, 60, co, 0), carbonIndex, co, 2)
+        const oAcid = aroundAxis(carbon, axis, 60, coh, 180)
+        const oIndex = push('O', oAcid, carbonIndex, coh)
+        push('H', branch(oAcid, carbon, 106, oh, 0), oIndex, oh)
+      }
+      const hydroxylO = mul(dHydroxyl, cOH)
+      const oIndex = push('O', hydroxylO, 0, cOH)
+      push('H', branch(hydroxylO, centre, 108, oh, 0), oIndex, oh)
+      const centralCarboxyl = mul(dCarboxyl, cCarboxyl)
+      const centralIndex = push('C', centralCarboxyl, 0, cCarboxyl)
+      carboxyl(centralIndex, centre)
+      for (const direction of [dArmA, dArmB]) {
+        const ch2 = mul(direction, cc)
+        const ch2Index = push('C', ch2, 0, cc)
+        // The arm's carboxyl continues outward, anti to the central carbon.
+        const armCarbon = aroundAxis(ch2, sub(ch2, centre), TETRAHEDRAL_CONE, cCarboxyl, 0)
+        const armIndex = push('C', armCarbon, ch2Index, cCarboxyl)
+        for (const p of completeSp3(ch2, centre, armCarbon, 107, ch)) {
+          push('H', p, ch2Index, ch)
+        }
+        carboxyl(armIndex, ch2)
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 3, 109.4712]] },
+  },
+  {
+    id: 'ascorbicacid',
+    formula: 'C6H8O6',
+    name: 'Ascorbic acid',
+    nameZh: '抗坏血酸',
+    category: 'organic',
+    shape: 'five-ring',
+    shapeZh: '五元内酯环',
+    idealized: true,
+    summaryZh:
+      '就是维生素 C。环上那对烯二醇羟基极易交出氢原子，所以它既能抗氧化，也能让人体合成胶原蛋白 —— 缺了它，血管和牙龈就出问题，这就是坏血病。',
+    summaryEn:
+      'Vitamin C. The pair of enediol hydroxyls on the ring gives up hydrogen atoms readily, which makes it both an antioxidant and the cofactor the body needs to build collagen. Without it, blood vessels and gums fail — scurvy.',
+    build() {
+      const ringBond = 1.4
+      const co = 1.21
+      const cOH = 1.36
+      const cSide = 1.52
+      const cChainO = 1.43
+      const ch = 1.09
+      const oh = 0.97
+      const radius = ringBond / (2 * Math.sin(Math.PI / 5))
+      // Ring order: C1, C2, C3, C4, O(ring), closing back to C1.
+      const [c1, c2, c3, c4, oRing] = ring([0, 0, 0], 5, radius)
+      const outward = (p, distance) => mul(norm(p), len(p) + distance)
+      const atoms = [
+        { element: 'C', position: c1 },
+        { element: 'C', position: c2 },
+        { element: 'C', position: c3 },
+        { element: 'C', position: c4 },
+        { element: 'O', position: oRing },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 1, length: ringBond },
+        { a: 1, b: 2, order: 2, length: ringBond },
+        { a: 2, b: 3, order: 1, length: ringBond },
+        { a: 3, b: 4, order: 1, length: ringBond },
+        { a: 4, b: 0, order: 1, length: ringBond },
+      ]
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      // The lactone carbonyl.
+      push('O', outward(c1, co), 0, co, 2)
+      // The two enediol hydroxyls, pointing straight out of the ring.
+      for (const [index, position] of [
+        [1, c2],
+        [2, c3],
+      ]) {
+        const o = outward(position, cOH)
+        const oIndex = push('O', o, index, cOH)
+        push('H', branch(o, position, 107, oh, 0), oIndex, oh)
+      }
+      // C4 is sp3: the side chain goes above the ring, its hydrogen below.
+      const [sideDirection, hDirection] = completeSp3(c4, c3, oRing, 109.5, 1)
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+      const c5 = along(c4, sideDirection, cSide)
+      const c5Index = push('C', c5, 3, cSide)
+      push('H', along(c4, hDirection, ch), 3, ch)
+      // C5 carries a hydroxyl and a hydrogen; C6 is a CH2OH. Both continuations
+      // are taken anti, so the tail extends away from the ring instead of
+      // folding back onto the hydroxyls.
+      const c6 = extendAnti(c3, c4, c5, 111.5, cSide)
+      const c6Index = push('C', c6, c5Index, cSide)
+      const [o5Direction, h5Direction] = completeSp3(c5, c4, c6, 108, 1)
+      const o5 = along(c5, o5Direction, cChainO)
+      const o5Index = push('O', o5, c5Index, cChainO)
+      push('H', along(c5, h5Direction, ch), c5Index, ch)
+      push('H', branch(o5, c5, 107, oh, 0), o5Index, oh)
+      const o6 = extendAnti(c4, c5, c6, 109.5, cChainO)
+      const o6Index = push('O', o6, c6Index, cChainO)
+      for (const p of completeSp3(c6, c5, o6, 108, ch)) push('H', p, c6Index, ch)
+      push('H', branch(o6, c6, 107, oh, 0), o6Index, oh)
+      return { atoms, bonds }
+    },
+  },
+  {
+    id: 'xylitol',
+    formula: 'C5H12O5',
+    name: 'Xylitol',
+    nameZh: '木糖醇',
+    category: 'organic',
+    shape: 'zigzag-chain',
+    shapeZh: '锯齿链 + 五羟基',
+    summaryZh:
+      '五个碳、五个羟基的糖醇，甜度接近蔗糖但口腔细菌无法发酵它，所以无糖口香糖用它防蛀牙。溶解时吸热，含在嘴里有清凉感。',
+    summaryEn:
+      'A five-carbon, five-hydroxyl sugar alcohol: nearly as sweet as sugar, but mouth bacteria cannot ferment it, which is why sugar-free gum uses it against decay. Dissolving absorbs heat, so it feels cool on the tongue.',
+    build() {
+      const cc = 1.523
+      const co = 1.43
+      const ch = 1.096
+      const oh = 0.97
+      const carbons = planarChain([0, 0, 0], [cc, 0, 0], zigzagSteps(3, cc, 112))
+      const atoms = carbons.map((p) => ({ element: 'C', position: p }))
+      const bonds = carbons.slice(1).map((_, i) => ({
+        a: i,
+        b: i + 1,
+        order: 1,
+        length: cc,
+      }))
+      const push = (element, position, from, length) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order: 1, length })
+        return atoms.length - 1
+      }
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+      // Interior carbons: hydroxyl and hydrogen on opposite faces of the chain,
+      // alternating which face takes the hydroxyl so neighbours stay clear.
+      for (let i = 1; i < 4; i++) {
+        const pair = completeSp3(carbons[i], carbons[i - 1], carbons[i + 1], 108, 1)
+        const [oDirection, hDirection] = i % 2 === 0 ? pair : [pair[1], pair[0]]
+        const o = along(carbons[i], oDirection, co)
+        const oIndex = push('O', o, i, co)
+        push('H', along(carbons[i], hDirection, ch), i, ch)
+        push('H', branch(o, carbons[i], 108, oh, 0), oIndex, oh)
+      }
+      // Both ends are CH2OH, their hydroxyls continuing the chain outwards.
+      for (const [index, neighbour] of [
+        [0, 1],
+        [4, 3],
+      ]) {
+        const carbon = carbons[index]
+        const o = aroundAxis(carbon, sub(carbon, carbons[neighbour]), TETRAHEDRAL_CONE, co, 0)
+        const oIndex = push('O', o, index, co)
+        for (const p of completeSp3(carbon, carbons[neighbour], o, 108, ch)) {
+          push('H', p, index, ch)
+        }
+        push('H', branch(o, carbon, 108, oh, 0), oIndex, oh)
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[1, 0, 2, 112]] },
+  },
+  {
+    id: 'glutamicacid',
+    formula: 'C5H9NO4',
+    name: 'Glutamic acid',
+    nameZh: '谷氨酸',
+    category: 'organic',
+    shape: 'zigzag-chain',
+    shapeZh: '锯齿链 + 氨基',
+    summaryZh:
+      '"鲜味"的分子。它的钠盐就是味精，昆布、番茄、干酪、酱油之所以鲜，都是因为游离谷氨酸。它同时是大脑最主要的兴奋性神经递质。',
+    summaryEn:
+      'The molecule of savouriness. Its sodium salt is MSG, and the free amino acid is why kelp, tomato, cheese and soy sauce taste of umami. It is also the brain’s main excitatory neurotransmitter.',
+    build() {
+      const cc = 1.52
+      const ccChain = 1.526
+      const co = 1.214
+      const coh = 1.31
+      const cn = 1.47
+      const nh = 1.01
+      const ch = 1.095
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const carbons = planarChain([0, 0, 0], [cc, 0, 0], zigzagSteps(3, ccChain, 112.7))
+      const [c1, c2, c3, c4, c5] = carbons
+      const atoms = carbons.map((p) => ({ element: 'C', position: p }))
+      const bonds = [
+        { a: 0, b: 1, order: 1, length: cc },
+        { a: 1, b: 2, order: 1, length: ccChain },
+        { a: 2, b: 3, order: 1, length: ccChain },
+        { a: 3, b: 4, order: 1, length: ccChain },
+      ]
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      // A carboxyl at each end, drawn in the plane of the backbone.
+      for (const [index, centre, anchor, side] of [
+        [0, c1, c2, 1],
+        [4, c5, c4, 1],
+      ]) {
+        push('O', inPlane(centre, anchor, 122, co, normal, side), index, co, 2)
+        const oAcid = inPlane(centre, anchor, 114, coh, normal, -side)
+        const oIndex = push('O', oAcid, index, coh)
+        push('H', inPlane(oAcid, centre, 106, oh, normal, -side), oIndex, oh)
+      }
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+      // The amino group on C2, its hydrogen on the opposite face.
+      const [nDirection, hDirection] = completeSp3(c2, c1, c3, 108, 1)
+      const nitrogen = along(c2, nDirection, cn)
+      const nIndex = push('N', nitrogen, 1, cn)
+      push('H', along(c2, hDirection, ch), 1, ch)
+      for (const d of coneDirections(sub(nitrogen, c2), 2, 70, 0)) {
+        push('H', add(nitrogen, mul(d, nh)), nIndex, nh)
+      }
+      for (const index of [2, 3]) {
+        for (const p of completeSp3(carbons[index], carbons[index - 1], carbons[index + 1], 106.5, ch)) {
+          push('H', p, index, ch)
+        }
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[1, 0, 2, 112.7]] },
+  },
+  {
+    id: 'stearicacid',
+    formula: 'C18H36O2',
+    name: 'Stearic acid',
+    nameZh: '硬脂酸',
+    category: 'organic',
+    shape: 'zigzag-chain',
+    shapeZh: '长锯齿链',
+    summaryZh:
+      '典型的饱和脂肪酸：一端亲水的羧基，一条十八个碳的疏水长尾 —— 肥皂去污、乳霜乳化、蜡烛成型，靠的都是这条"一头亲水一头亲油"的结构。',
+    summaryEn:
+      'The archetypal saturated fatty acid: a water-loving carboxyl at one end and an eighteen-carbon water-hating tail. That one-end-each structure is what makes soap clean, creams emulsify and candles hold their shape.',
+    build() {
+      const cc = 1.526
+      const cSp2 = 1.52
+      const co = 1.214
+      const coh = 1.31
+      const ch = 1.095
+      const chMethyl = 1.094
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const carbons = planarChain([0, 0, 0], [cSp2, 0, 0], zigzagSteps(16, cc, 112.7))
+      const atoms = carbons.map((p) => ({ element: 'C', position: p }))
+      const bonds = carbons.slice(1).map((_, i) => ({
+        a: i,
+        b: i + 1,
+        order: 1,
+        length: i === 0 ? cSp2 : cc,
+      }))
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      push('O', inPlane(carbons[0], carbons[1], 122, co, normal, 1), 0, co, 2)
+      const oAcid = inPlane(carbons[0], carbons[1], 114, coh, normal, -1)
+      const oIndex = push('O', oAcid, 0, coh)
+      push('H', inPlane(oAcid, carbons[0], 106, oh, normal, -1), oIndex, oh)
+      for (let i = 1; i < carbons.length - 1; i++) {
+        for (const p of completeSp3(carbons[i], carbons[i - 1], carbons[i + 1], 106.5, ch)) {
+          push('H', p, i, ch)
+        }
+      }
+      const last = carbons.length - 1
+      for (const p of methyl(carbons[last], carbons[last - 1], chMethyl)) {
+        push('H', p, last, chMethyl)
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[1, 0, 2, 112.7]] },
+  },
+  {
+    id: 'oleicacid',
+    formula: 'C18H34O2',
+    name: 'Oleic acid',
+    nameZh: '油酸',
+    category: 'organic',
+    shape: 'kinked-chain',
+    shapeZh: '含顺式弯折的长链',
+    summaryZh:
+      '与硬脂酸只差中间一个顺式双键，链却因此折出约 30° 的弯 —— 分子排不紧密，于是橄榄油在室温下是液体，而硬脂酸是硬块。饱和与不饱和脂肪的差别，看这一个折角就够了。',
+    summaryEn:
+      'It differs from stearic acid by one cis double bond, and that single kink kinks the chain by about 30°. The molecules can no longer pack tightly, so olive oil is liquid while stearic acid is a hard solid — the whole saturated-versus-unsaturated story in one bend.',
+    build() {
+      const cc = 1.526
+      const cSp2 = 1.52
+      const cd = 1.331
+      const cAllylic = 1.5
+      const co = 1.214
+      const coh = 1.31
+      const ch = 1.095
+      const chVinyl = 1.09
+      const chMethyl = 1.094
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      // Carbons 3..18. The two turns at the double bond repeat their side, which
+      // is what makes it cis; everywhere else the sides alternate.
+      const steps = []
+      let side = 1
+      const step = (angle, length) => {
+        steps.push({ angle, length, side })
+        side = -side
+      }
+      for (let n = 3; n <= 9; n++) step(112.7, cc)
+      step(125, cd) // places C10 across the double bond
+      side = -side // repeat the side: the cis kink
+      step(125, cAllylic) // places C11
+      for (let n = 12; n <= 18; n++) step(112.7, cc)
+      const carbons = planarChain([0, 0, 0], [cSp2, 0, 0], steps)
+      const atoms = carbons.map((p) => ({ element: 'C', position: p }))
+      const bonds = carbons.slice(1).map((_, i) => ({
+        a: i,
+        b: i + 1,
+        order: i === 8 ? 2 : 1,
+        length: i === 0 ? cSp2 : steps[i - 1]?.length ?? cc,
+      }))
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      push('O', inPlane(carbons[0], carbons[1], 122, co, normal, 1), 0, co, 2)
+      const oAcid = inPlane(carbons[0], carbons[1], 114, coh, normal, -1)
+      const oIndex = push('O', oAcid, 0, coh)
+      push('H', inPlane(oAcid, carbons[0], 106, oh, normal, -1), oIndex, oh)
+      for (let i = 1; i < carbons.length - 1; i++) {
+        if (i === 8 || i === 9) continue
+        for (const p of completeSp3(carbons[i], carbons[i - 1], carbons[i + 1], 106.5, ch)) {
+          push('H', p, i, ch)
+        }
+      }
+      // The two alkene hydrogens sit in the chain plane, opposite the continuation.
+      push('H', inPlane(carbons[8], carbons[7], 118, chVinyl, normal, -steps[7].side), 8, chVinyl)
+      push('H', inPlane(carbons[9], carbons[8], 118, chVinyl, normal, -steps[8].side), 9, chVinyl)
+      const last = carbons.length - 1
+      for (const p of methyl(carbons[last], carbons[last - 1], chMethyl)) {
+        push('H', p, last, chMethyl)
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[1, 0, 2, 112.7]] },
+  },
+  {
+    id: 'theobromine',
+    formula: 'C7H8N4O2',
+    name: 'Theobromine',
+    nameZh: '可可碱',
+    category: 'organic',
+    shape: 'fused-rings',
+    shapeZh: '嘌呤并环',
+    idealized: true,
+    summaryZh:
+      '巧克力里的主要生物碱，比咖啡因少一个甲基。它提神更温和、作用更久；但狗代谢它极慢，所以巧克力对狗有毒。',
+    summaryEn:
+      'The main alkaloid of chocolate, one methyl group short of caffeine. Its lift is gentler and longer-lasting — but dogs break it down very slowly, which is why chocolate poisons them.',
+    build() {
+      const ringBond = 1.38
+      const co = 1.22
+      const ncH3 = 1.47
+      const ch = 1.08
+      const chMethyl = 1.09
+      const nh = 1.01
+      const { shared, ringA, ringB } = fusedRings(ringBond, 6, 5)
+      const [c4, c5] = shared
+      const [, , c6, n1, c2, n3] = ringA
+      const [, , n7, c8, n9] = ringB
+      const sixCentre = [ringA.reduce((s, p) => s + p[0], 0) / 6, 0, 0]
+      const fiveCentre = [ringB.reduce((s, p) => s + p[0], 0) / 5, 0, 0]
+      const outward = (p, centre, distance) => add(p, mul(norm(sub(p, centre)), distance))
+      const m3 = outward(n3, sixCentre, ncH3)
+      const m7 = outward(n7, fiveCentre, ncH3)
+      const atoms = [
+        { element: 'C', position: c4 },
+        { element: 'C', position: c5 },
+        { element: 'C', position: c6 },
+        { element: 'N', position: n1 },
+        { element: 'C', position: c2 },
+        { element: 'N', position: n3 },
+        { element: 'N', position: n7 },
+        { element: 'C', position: c8 },
+        { element: 'N', position: n9 },
+        { element: 'O', position: outward(c6, sixCentre, co) },
+        { element: 'O', position: outward(c2, sixCentre, co) },
+        { element: 'C', position: m3 },
+        { element: 'C', position: m7 },
+        { element: 'H', position: outward(c8, fiveCentre, ch) },
+        // N1 keeps its hydrogen: that is the difference from caffeine.
+        { element: 'H', position: outward(n1, sixCentre, nh) },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 2, length: ringBond },
+        { a: 1, b: 2, order: 1, length: ringBond },
+        { a: 2, b: 3, order: 1, length: ringBond },
+        { a: 3, b: 4, order: 1, length: ringBond },
+        { a: 4, b: 5, order: 1, length: ringBond },
+        { a: 5, b: 0, order: 1, length: ringBond },
+        { a: 1, b: 6, order: 1, length: ringBond },
+        { a: 6, b: 7, order: 1, length: ringBond },
+        { a: 7, b: 8, order: 2, length: ringBond },
+        { a: 8, b: 0, order: 1, length: ringBond },
+        { a: 2, b: 9, order: 2, length: co },
+        { a: 4, b: 10, order: 2, length: co },
+        { a: 5, b: 11, order: 1, length: ncH3 },
+        { a: 6, b: 12, order: 1, length: ncH3 },
+        { a: 7, b: 13, order: 1, length: ch },
+        { a: 3, b: 14, order: 1, length: nh },
+      ]
+      for (const [carbon, attached] of [
+        [11, n3],
+        [12, n7],
+      ]) {
+        for (const h of methyl(atoms[carbon].position, attached, chMethyl)) {
+          atoms.push({ element: 'H', position: h })
+          bonds.push({ a: carbon, b: atoms.length - 1, order: 1, length: chMethyl })
+        }
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]] },
+  },
+  {
+    id: 'uricacid',
+    formula: 'C5H4N4O3',
+    name: 'Uric acid',
+    nameZh: '尿酸',
+    category: 'organic',
+    shape: 'fused-rings',
+    shapeZh: '嘌呤并环',
+    idealized: true,
+    summaryZh:
+      '人体分解嘌呤的终产物。人类缺少把它继续降解的尿酸酶，血中浓度一高就析出针状晶体扎在关节里 —— 这就是痛风发作的痛。',
+    summaryEn:
+      'The end product of purine breakdown. Humans lack the enzyme that would degrade it further, so once blood levels run high it crystallises into needles inside a joint — the pain of gout.',
+    build() {
+      const ringBond = 1.38
+      const co = 1.22
+      const nh = 1.01
+      const { shared, ringA, ringB } = fusedRings(ringBond, 6, 5)
+      const [c4, c5] = shared
+      const [, , c6, n1, c2, n3] = ringA
+      const [, , n7, c8, n9] = ringB
+      const sixCentre = [ringA.reduce((s, p) => s + p[0], 0) / 6, 0, 0]
+      const fiveCentre = [ringB.reduce((s, p) => s + p[0], 0) / 5, 0, 0]
+      const outward = (p, centre, distance) => add(p, mul(norm(sub(p, centre)), distance))
+      const atoms = [
+        { element: 'C', position: c4 },
+        { element: 'C', position: c5 },
+        { element: 'C', position: c6 },
+        { element: 'N', position: n1 },
+        { element: 'C', position: c2 },
+        { element: 'N', position: n3 },
+        { element: 'N', position: n7 },
+        { element: 'C', position: c8 },
+        { element: 'N', position: n9 },
+        { element: 'O', position: outward(c6, sixCentre, co) },
+        { element: 'O', position: outward(c2, sixCentre, co) },
+        { element: 'O', position: outward(c8, fiveCentre, co) },
+        { element: 'H', position: outward(n1, sixCentre, nh) },
+        { element: 'H', position: outward(n3, sixCentre, nh) },
+        { element: 'H', position: outward(n7, fiveCentre, nh) },
+        { element: 'H', position: outward(n9, fiveCentre, nh) },
+      ]
+      return {
+        atoms,
+        bonds: [
+          { a: 0, b: 1, order: 2, length: ringBond },
+          { a: 1, b: 2, order: 1, length: ringBond },
+          { a: 2, b: 3, order: 1, length: ringBond },
+          { a: 3, b: 4, order: 1, length: ringBond },
+          { a: 4, b: 5, order: 1, length: ringBond },
+          { a: 5, b: 0, order: 1, length: ringBond },
+          { a: 1, b: 6, order: 1, length: ringBond },
+          { a: 6, b: 7, order: 1, length: ringBond },
+          { a: 7, b: 8, order: 1, length: ringBond },
+          { a: 8, b: 0, order: 1, length: ringBond },
+          { a: 2, b: 9, order: 2, length: co },
+          { a: 4, b: 10, order: 2, length: co },
+          { a: 7, b: 11, order: 2, length: co },
+          { a: 3, b: 12, order: 1, length: nh },
+          { a: 5, b: 13, order: 1, length: nh },
+          { a: 6, b: 14, order: 1, length: nh },
+          { a: 8, b: 15, order: 1, length: nh },
+        ],
+      }
+    },
+    checks: { angles: [[0, 1, 5, 120]], planar: true },
+  },
+  {
+    id: 'dopamine',
+    formula: 'C8H11NO2',
+    name: 'Dopamine',
+    nameZh: '多巴胺',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 乙胺链',
+    idealized: true,
+    summaryZh:
+      '大脑里负责奖赏与动机的神经递质 —— 它传递的与其说是"快乐"，不如说是"值得再来一次"。同一个分子在体外也能被氧化成黑色素，切开的苹果发褐与它同源。',
+    summaryEn:
+      'The neurotransmitter behind reward and motivation — it signals "worth doing again" rather than pleasure itself. Oxidised outside the body the same catechol turns into dark pigment, the chemistry that browns a cut apple.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cChain = 1.51
+      const ccChain = 1.526
+      const cn = 1.47
+      const cPhenolO = 1.37
+      const ch = 1.09
+      const nh = 1.01
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      // Ethylamine chain on ring position 0, extended away from the ring.
+      const c1 = mul(norm(ringCarbons[0]), cc + cChain)
+      const c1Index = push('C', c1, 0, cChain)
+      const c2 = extendAnti(ringCarbons[1], ringCarbons[0], c1, 112, ccChain)
+      const c2Index = push('C', c2, c1Index, ccChain)
+      const nitrogen = extendAnti(ringCarbons[0], c1, c2, 111, cn)
+      const nIndex = push('N', nitrogen, c2Index, cn)
+      for (const p of completeSp3(c1, ringCarbons[0], c2, 107, ch)) push('H', p, c1Index, ch)
+      for (const p of completeSp3(c2, c1, nitrogen, 107, ch)) push('H', p, c2Index, ch)
+      for (const d of coneDirections(sub(nitrogen, c2), 2, 70, 0)) {
+        push('H', add(nitrogen, mul(d, nh)), nIndex, nh)
+      }
+      // Catechol hydroxyls on ring positions 2 and 3, turned away from each other.
+      for (const [index, side] of [
+        [2, -1],
+        [3, 1],
+      ]) {
+        const o = mul(norm(ringCarbons[index]), cc + cPhenolO)
+        const oIndex = push('O', o, index, cPhenolO)
+        push('H', inPlane(o, ringCarbons[index], 108, oh, normal, side), oIndex, oh)
+      }
+      for (const index of [1, 4, 5]) {
+        push('H', mul(norm(ringCarbons[index]), cc + chRing), index, chRing)
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]] },
+  },
+  {
+    id: 'adrenaline',
+    formula: 'C9H13NO3',
+    name: 'Adrenaline',
+    nameZh: '肾上腺素',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 侧链',
+    idealized: true,
+    summaryZh:
+      '"战或逃"的分子：心跳加快、瞳孔放大、支气管扩张、血糖上升，都在几秒内由它触发。过敏性休克的急救笔里装的就是它。',
+    summaryEn:
+      'The fight-or-flight molecule: faster heartbeat, wide pupils, open airways and a rise in blood sugar, all triggered within seconds. It is what an anaphylaxis auto-injector contains.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cChain = 1.51
+      const ccChain = 1.526
+      const cn = 1.47
+      const cPhenolO = 1.37
+      const cAlcoholO = 1.43
+      const ch = 1.09
+      const chMethyl = 1.09
+      const nh = 1.01
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+      const c1 = mul(norm(ringCarbons[0]), cc + cChain)
+      const c1Index = push('C', c1, 0, cChain)
+      const c2 = extendAnti(ringCarbons[1], ringCarbons[0], c1, 112, ccChain)
+      const c2Index = push('C', c2, c1Index, ccChain)
+      const nitrogen = extendAnti(ringCarbons[0], c1, c2, 111, cn)
+      const nIndex = push('N', nitrogen, c2Index, cn)
+      // The benzylic carbon carries the hydroxyl that makes it adrenaline.
+      const [oDirection, hDirection] = completeSp3(c1, ringCarbons[0], c2, 108, 1)
+      const benzylicO = along(c1, oDirection, cAlcoholO)
+      const benzylicIndex = push('O', benzylicO, c1Index, cAlcoholO)
+      push('H', along(c1, hDirection, ch), c1Index, ch)
+      push('H', branch(benzylicO, c1, 108, oh, 0), benzylicIndex, oh)
+      for (const p of completeSp3(c2, c1, nitrogen, 107, ch)) push('H', p, c2Index, ch)
+      const [methylDirection, nhDirection] = coneDirections(sub(nitrogen, c2), 2, 70, 0)
+      const nMethyl = add(nitrogen, mul(methylDirection, cn))
+      const methylIndex = push('C', nMethyl, nIndex, cn)
+      push('H', add(nitrogen, mul(nhDirection, nh)), nIndex, nh)
+      for (const h of methyl(nMethyl, nitrogen, chMethyl)) push('H', h, methylIndex, chMethyl)
+      for (const [index, side] of [
+        [2, -1],
+        [3, 1],
+      ]) {
+        const o = mul(norm(ringCarbons[index]), cc + cPhenolO)
+        const oIndex = push('O', o, index, cPhenolO)
+        push('H', inPlane(o, ringCarbons[index], 108, oh, normal, side), oIndex, oh)
+      }
+      for (const index of [1, 4, 5]) {
+        push('H', mul(norm(ringCarbons[index]), cc + chRing), index, chRing)
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]] },
+  },
+  {
+    id: 'ibuprofen',
+    formula: 'C13H18O2',
+    name: 'Ibuprofen',
+    nameZh: '布洛芬',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 支链 + 羧基',
+    idealized: true,
+    summaryZh:
+      '家庭药箱里最常见的消炎止痛药。它抑制环氧合酶，切断前列腺素的合成 —— 于是痛、肿、发热一起降下来。空腹服用伤胃，也是同一个机制的代价。',
+    summaryEn:
+      'The anti-inflammatory painkiller in every medicine cabinet. It blocks cyclo-oxygenase and cuts off prostaglandin synthesis, so pain, swelling and fever all subside together — and the same mechanism is why it is hard on an empty stomach.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cChain = 1.51
+      const ccChain = 1.53
+      const cCarboxyl = 1.52
+      const co = 1.21
+      const coh = 1.32
+      const ch = 1.09
+      const chMethyl = 1.09
+      const oh = 0.97
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+      // Ring position 0: the propanoic acid arm.
+      const alpha = mul(norm(ringCarbons[0]), cc + cChain)
+      const alphaIndex = push('C', alpha, 0, cChain)
+      const carboxylC = extendAnti(ringCarbons[1], ringCarbons[0], alpha, 111, cCarboxyl)
+      const carboxylIndex = push('C', carboxylC, alphaIndex, cCarboxyl)
+      const axis = sub(carboxylC, alpha)
+      push('O', aroundAxis(carboxylC, axis, 60, co, 0), carboxylIndex, co, 2)
+      const oAcid = aroundAxis(carboxylC, axis, 60, coh, 180)
+      const oIndex = push('O', oAcid, carboxylIndex, coh)
+      push('H', branch(oAcid, carboxylC, 106, oh, 0), oIndex, oh)
+      const [methylDirection, hDirection] = completeSp3(alpha, ringCarbons[0], carboxylC, 108, 1)
+      const alphaMethyl = along(alpha, methylDirection, ccChain)
+      const alphaMethylIndex = push('C', alphaMethyl, alphaIndex, ccChain)
+      push('H', along(alpha, hDirection, ch), alphaIndex, ch)
+      for (const h of methyl(alphaMethyl, alpha, chMethyl)) {
+        push('H', h, alphaMethylIndex, chMethyl)
+      }
+      // Ring position 3 (para): the isobutyl arm.
+      const ch2 = mul(norm(ringCarbons[3]), cc + cChain)
+      const ch2Index = push('C', ch2, 3, cChain)
+      const isopropylC = extendAnti(ringCarbons[4], ringCarbons[3], ch2, 112, ccChain)
+      const isopropylIndex = push('C', isopropylC, ch2Index, ccChain)
+      for (const p of completeSp3(ch2, ringCarbons[3], isopropylC, 107, ch)) {
+        push('H', p, ch2Index, ch)
+      }
+      // Rotated so the methyls swing clear of the ring hydrogens.
+      const branches = coneDirections(sub(isopropylC, ch2), 3, TETRAHEDRAL_CONE, 180)
+      for (const direction of branches.slice(0, 2)) {
+        const carbon = add(isopropylC, mul(direction, ccChain))
+        const index = push('C', carbon, isopropylIndex, ccChain)
+        for (const h of methyl(carbon, isopropylC, chMethyl)) push('H', h, index, chMethyl)
+      }
+      push('H', add(isopropylC, mul(branches[2], ch)), isopropylIndex, ch)
+      for (const index of [1, 2, 4, 5]) {
+        push('H', mul(norm(ringCarbons[index]), cc + chRing), index, chRing)
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]] },
+  },
+  {
+    id: 'menthol',
+    formula: 'C10H20O',
+    name: 'Menthol',
+    nameZh: '薄荷醇',
+    category: 'organic',
+    shape: 'chair',
+    shapeZh: '椅式环 + 三取代',
+    summaryZh:
+      '它并不真的降温，而是直接打开皮肤和口腔里感知寒冷的 TRPM8 通道，大脑于是收到"冷"的信号。牙膏、口香糖、清凉油的凉意都是这样来的。三个取代基都取平伏位，是最稳定的构象。',
+    summaryEn:
+      'It does not cool anything: it opens TRPM8, the cold receptor in skin and mouth, so the brain simply receives "cold". That is the chill of toothpaste, chewing gum and muscle rub. All three substituents sit equatorial, the most stable arrangement.',
+    build() {
+      const cc = 1.53
+      const ccChain = 1.53
+      const co = 1.43
+      const ch = 1.096
+      const chMethyl = 1.09
+      const oh = 0.97
+      const positions = puckeredRingPositions(6, cc, 111.5)
+      const atoms = positions.map((p) => ({ element: 'C', position: p }))
+      const bonds = positions.map((_, i) => ({ a: i, b: (i + 1) % 6, order: 1, length: cc }))
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+      const substituents = new Map([
+        [0, 'hydroxyl'],
+        [1, 'isopropyl'],
+        [4, 'methyl'],
+      ])
+      for (let i = 0; i < 6; i++) {
+        const centre = positions[i]
+        const { axial, equatorial } = axialEquatorial(
+          centre,
+          positions[(i + 5) % 6],
+          positions[(i + 1) % 6],
+          108,
+          1,
+        )
+        const kind = substituents.get(i)
+        if (!kind) {
+          for (const direction of [axial, equatorial]) push('H', along(centre, direction, ch), i, ch)
+          continue
+        }
+        // Substituents take the equatorial slot; the hydrogen takes the axial one.
+        push('H', along(centre, axial, ch), i, ch)
+        if (kind === 'hydroxyl') {
+          const oxygen = along(centre, equatorial, co)
+          const oIndex = push('O', oxygen, i, co)
+          push('H', branch(oxygen, centre, 108, oh, 0), oIndex, oh)
+        } else if (kind === 'methyl') {
+          const carbon = along(centre, equatorial, ccChain)
+          const index = push('C', carbon, i, ccChain)
+          for (const h of methyl(carbon, centre, chMethyl)) push('H', h, index, chMethyl)
+        } else {
+          const carbon = along(centre, equatorial, ccChain)
+          const index = push('C', carbon, i, ccChain)
+          // Rotated away from the neighbouring hydroxyl.
+          const branches = coneDirections(sub(carbon, centre), 3, TETRAHEDRAL_CONE, 180)
+          for (const direction of branches.slice(0, 2)) {
+            const methylC = add(carbon, mul(direction, ccChain))
+            const methylIndex = push('C', methylC, index, ccChain)
+            for (const h of methyl(methylC, carbon, chMethyl)) push('H', h, methylIndex, chMethyl)
+          }
+          push('H', add(carbon, mul(branches[2], ch)), index, ch)
+        }
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 111.5]] },
+  },
+  {
+    id: 'nicotine',
+    formula: 'C10H14N2',
+    name: 'Nicotine',
+    nameZh: '尼古丁',
+    category: 'organic',
+    shape: 'two-rings',
+    shapeZh: '吡啶环 + 吡咯烷环',
+    idealized: true,
+    summaryZh:
+      '烟草里的成瘾成分。它的形状与乙酰胆碱相似，能骗过神经上的乙酰胆碱受体，几秒内到达大脑并释放多巴胺 —— 成瘾就是这么快建立的。烟草用它来毒杀啃食叶子的昆虫。',
+    summaryEn:
+      'The addictive component of tobacco. Shaped enough like acetylcholine to fool nicotinic receptors, it reaches the brain within seconds and releases dopamine — which is how the habit forms so fast. The plant makes it to poison insects that chew its leaves.',
+    build() {
+      const ringFive = 1.5
+      const ringSix = 1.39
+      const cLink = 1.51
+      const nMethyl = 1.47
+      const ch = 1.09
+      const chRing = 1.084
+      const chMethyl = 1.09
+      // Pyrrolidine first, flat in the xy-plane: N1', C2', C3', C4', C5'.
+      const radiusFive = ringFive / (2 * Math.sin(Math.PI / 5))
+      const [n1, c2, c3, c4, c5] = ring([0, 0, 0], 5, radiusFive)
+      const atoms = [
+        { element: 'N', position: n1 },
+        { element: 'C', position: c2 },
+        { element: 'C', position: c3 },
+        { element: 'C', position: c4 },
+        { element: 'C', position: c5 },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 1, length: ringFive },
+        { a: 1, b: 2, order: 1, length: ringFive },
+        { a: 2, b: 3, order: 1, length: ringFive },
+        { a: 3, b: 4, order: 1, length: ringFive },
+        { a: 4, b: 0, order: 1, length: ringFive },
+      ]
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+      // C2' carries the pyridine on one face and a hydrogen on the other.
+      const [ringDirection, hDirection] = completeSp3(c2, n1, c3, 109.5, 1)
+      const ipso = along(c2, ringDirection, cLink)
+      const axis = norm(sub(ipso, c2))
+      // The pyridine plane is taken through the pyrrolidine's normal, which puts
+      // the two rings roughly perpendicular — the shape nicotine actually adopts.
+      const upright = sub([0, 0, 1], mul(axis, dot([0, 0, 1], axis)))
+      const pyridine = ringAtVertex(ipso, axis, upright, 6, ringSix)
+      const pyridineCentre = mul(
+        pyridine.reduce((s, p) => add(s, p), [0, 0, 0]),
+        1 / 6,
+      )
+      const ipsoIndex = push('C', pyridine[0], 1, cLink)
+      const pyridineIndices = [ipsoIndex]
+      for (let i = 1; i < 6; i++) {
+        // Position 2 of the walk is the ring nitrogen: a 3-pyridyl group.
+        pyridineIndices.push(
+          push(i === 2 ? 'N' : 'C', pyridine[i], pyridineIndices[i - 1], ringSix, i % 2 === 0 ? 2 : 1),
+        )
+      }
+      bonds.push({ a: pyridineIndices[5], b: ipsoIndex, order: 2, length: ringSix })
+      for (const i of [1, 3, 4, 5]) {
+        push(
+          'H',
+          add(pyridine[i], mul(norm(sub(pyridine[i], pyridineCentre)), chRing)),
+          pyridineIndices[i],
+          chRing,
+        )
+      }
+      push('H', along(c2, hDirection, ch), 1, ch)
+      // The N-methyl points straight out of the five-ring.
+      const methylC = mul(norm(n1), len(n1) + nMethyl)
+      const methylIndex = push('C', methylC, 0, nMethyl)
+      for (const h of methyl(methylC, n1, chMethyl)) push('H', h, methylIndex, chMethyl)
+      for (const [index, previous, next] of [
+        [2, c2, c4],
+        [3, c3, c5],
+        [4, c4, n1],
+      ]) {
+        for (const p of completeSp3(atoms[index].position, previous, next, 108, ch)) {
+          push('H', p, index, ch)
+        }
+      }
+      return { atoms, bonds }
+    },
+  },
+  {
+    id: 'fructose',
+    formula: 'C6H12O6',
+    name: 'Fructose',
+    nameZh: '果糖',
+    category: 'organic',
+    shape: 'five-ring',
+    shapeZh: '五元呋喃环',
+    idealized: true,
+    summaryZh:
+      '水果和蜂蜜里的糖，也是最甜的天然糖 —— 甜度约为蔗糖的 1.7 倍。与葡萄糖是同分异构体，却几乎只在肝脏代谢，这也是果葡糖浆备受争议的原因。',
+    summaryEn:
+      'The sugar of fruit and honey, and the sweetest natural sugar — about 1.7 times sucrose. It is an isomer of glucose, yet it is metabolised almost entirely in the liver, which is what makes high-fructose syrup controversial.',
+    build() {
+      const ringBond = 1.43
+      const co = 1.42
+      const cc = 1.52
+      const ch = 1.09
+      const oh = 0.97
+      const radius = ringBond / (2 * Math.sin(Math.PI / 5))
+      // Ring: C2, C3, C4, C5, O(ring).
+      const [c2, c3, c4, c5, oRing] = ring([0, 0, 0], 5, radius)
+      const atoms = [
+        { element: 'C', position: c2 },
+        { element: 'C', position: c3 },
+        { element: 'C', position: c4 },
+        { element: 'C', position: c5 },
+        { element: 'O', position: oRing },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 1, length: ringBond },
+        { a: 1, b: 2, order: 1, length: ringBond },
+        { a: 2, b: 3, order: 1, length: ringBond },
+        { a: 3, b: 4, order: 1, length: ringBond },
+        { a: 4, b: 0, order: 1, length: ringBond },
+      ]
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+      /** Adds a -CH2OH arm on a ring carbon, extended away from the ring. */
+      const hydroxymethyl = (index, centre, neighbour, direction) => {
+        const carbon = along(centre, direction, cc)
+        const carbonIndex = push('C', carbon, index, cc)
+        const oxygen = extendAnti(neighbour, centre, carbon, 109.5, co)
+        const oIndex = push('O', oxygen, carbonIndex, co)
+        for (const p of completeSp3(carbon, centre, oxygen, 108, ch)) push('H', p, carbonIndex, ch)
+        push('H', branch(oxygen, carbon, 108, oh, 0), oIndex, oh)
+      }
+      /** Adds a hydroxyl on a ring carbon. */
+      const hydroxyl = (index, centre, direction) => {
+        const oxygen = along(centre, direction, co)
+        const oIndex = push('O', oxygen, index, co)
+        push('H', branch(oxygen, centre, 108, oh, 0), oIndex, oh)
+      }
+      // C2 is the anomeric carbon: hydroxyl on one face, the C1 arm on the other.
+      const c2Faces = completeSp3(c2, oRing, c3, 109.5, 1)
+      hydroxyl(0, c2, c2Faces[0])
+      hydroxymethyl(0, c2, c3, c2Faces[1])
+      for (const [index, centre, previous, next] of [
+        [1, c3, c2, c4],
+        [2, c4, c3, c5],
+      ]) {
+        const faces = completeSp3(centre, previous, next, 109.5, 1)
+        hydroxyl(index, centre, faces[index % 2])
+        push('H', along(centre, faces[(index + 1) % 2], ch), index, ch)
+      }
+      const c5Faces = completeSp3(c5, c4, oRing, 109.5, 1)
+      hydroxymethyl(3, c5, c4, c5Faces[0])
+      push('H', along(c5, c5Faces[1], ch), 3, ch)
+      return { atoms, bonds }
+    },
+  },
+  {
+    id: 'sucrose',
+    formula: 'C12H22O11',
+    name: 'Sucrose',
+    nameZh: '蔗糖',
+    category: 'organic',
+    shape: 'two-rings',
+    shapeZh: '六元环 + 五元环',
+    idealized: true,
+    summaryZh:
+      '白砂糖。一个葡萄糖的六元环与一个果糖的五元环通过一个氧桥相连，而这个连接用掉了两边的还原性端 —— 所以蔗糖不还原、不易变质，也正因如此适合做糖果和保存食物。',
+    summaryEn:
+      'Table sugar: a six-membered glucose ring and a five-membered fructose ring joined through one oxygen. That link uses up the reducing end of both halves, so sucrose is non-reducing and keeps well — which is exactly why it works in sweets and preserves.',
+    build() {
+      const ringBond = 1.43
+      const co = 1.42
+      const cc = 1.52
+      const ch = 1.1
+      const oh = 0.97
+      const glycosidic = 1.42
+      const atoms = []
+      const bonds = []
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        if (from !== null) bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+
+      // ---- glucose half: a pyranose chair, ring atom 0 being the oxygen ----
+      const pyranose = puckeredRingPositions(6, ringBond, 111.5)
+      push('O', pyranose[0], null)
+      for (let i = 1; i < 6; i++) push('C', pyranose[i], null)
+      for (let i = 0; i < 6; i++) bonds.push({ a: i, b: (i + 1) % 6, order: 1, length: ringBond })
+      let linkO = null
+      let linkIndex = -1
+      for (const index of [1, 2, 3, 4, 5]) {
+        const centre = pyranose[index]
+        const { axial, equatorial } = axialEquatorial(
+          centre,
+          pyranose[(index + 5) % 6],
+          pyranose[(index + 1) % 6],
+          109.5,
+          1,
+        )
+        if (index === 1) {
+          // The anomeric carbon. Alpha-D-glucose carries it axially, and here it
+          // is the bridge to the fructose ring rather than a hydroxyl.
+          linkO = along(centre, axial, glycosidic)
+          linkIndex = push('O', linkO, index, glycosidic)
+          push('H', along(centre, equatorial, ch), index, ch)
+        } else if (index === 5) {
+          const c6 = along(centre, equatorial, cc)
+          const c6Index = push('C', c6, index, cc)
+          const o6 = extendAnti(pyranose[4], centre, c6, 109.5, co)
+          const o6Index = push('O', o6, c6Index, co)
+          for (const p of completeSp3(c6, centre, o6, 108, ch)) push('H', p, c6Index, ch)
+          push('H', branch(o6, c6, 108, oh, 0), o6Index, oh)
+          push('H', along(centre, axial, ch), index, ch)
+        } else {
+          const o = along(centre, equatorial, co)
+          const oIndex = push('O', o, index, co)
+          push('H', branch(o, centre, 108, oh, 0), oIndex, oh)
+          push('H', along(centre, axial, ch), index, ch)
+        }
+      }
+      const glucoseAtoms = atoms.length
+
+      // ---- fructose half, built at the origin and then moved into place ----
+      const fragment = () => {
+        const list = []
+        const links = []
+        const radius = ringBond / (2 * Math.sin(Math.PI / 5))
+        const [c2, c3, c4, c5, oRing] = ring([0, 0, 0], 5, radius)
+        for (const [element, position] of [
+          ['C', c2],
+          ['C', c3],
+          ['C', c4],
+          ['C', c5],
+          ['O', oRing],
+        ]) {
+          list.push({ element, position })
+        }
+        for (let i = 0; i < 5; i++) {
+          links.push({ a: i, b: (i + 1) % 5, order: 1, length: ringBond })
+        }
+        const add2 = (element, position, from, length) => {
+          list.push({ element, position })
+          links.push({ a: from, b: list.length - 1, order: 1, length })
+          return list.length - 1
+        }
+        const arm = (index, centre, neighbour, direction) => {
+          const carbon = along(centre, direction, cc)
+          const carbonIndex = add2('C', carbon, index, cc)
+          const oxygen = extendAnti(neighbour, centre, carbon, 109.5, co)
+          const oxygenIndex = add2('O', oxygen, carbonIndex, co)
+          for (const p of completeSp3(carbon, centre, oxygen, 108, ch)) add2('H', p, carbonIndex, ch)
+          add2('H', branch(oxygen, carbon, 108, oh, 0), oxygenIndex, oh)
+        }
+        // C2 is the anomeric carbon: one face takes the bridge to glucose, the
+        // other the C1 hydroxymethyl arm.
+        const [bridgeFace, armFace] = completeSp3(c2, oRing, c3, 109.5, 1)
+        arm(0, c2, c3, armFace)
+        for (const [index, centre, previous, next] of [
+          [1, c3, c2, c4],
+          [2, c4, c3, c5],
+        ]) {
+          const faces = completeSp3(centre, previous, next, 109.5, 1)
+          const oxygen = along(centre, faces[index % 2], co)
+          const oxygenIndex = add2('O', oxygen, index, co)
+          add2('H', branch(oxygen, centre, 108, oh, 0), oxygenIndex, oh)
+          add2('H', along(centre, faces[(index + 1) % 2], ch), index, ch)
+        }
+        const c5Faces = completeSp3(c5, c4, oRing, 109.5, 1)
+        arm(3, c5, c4, c5Faces[0])
+        add2('H', along(c5, c5Faces[1], ch), 3, ch)
+        return { list, links, anchor: c2, bridge: along(c2, bridgeFace, glycosidic) }
+      }
+
+      const frag = fragment()
+      // Where the fructose anomeric carbon has to end up: one bond on from the
+      // bridging oxygen, anti to the glucose ring.
+      const target = extendAnti(pyranose[0], pyranose[1], linkO, 116, glycosidic)
+      const toBridge = sub(linkO, target)
+      const place = (spin) =>
+        frag.list.map((atom) => {
+          const moved = add(
+            target,
+            sub(
+              rotateOnto(atom.position, sub(frag.bridge, frag.anchor), toBridge, frag.anchor),
+              frag.anchor,
+            ),
+          )
+          return { element: atom.element, position: rotateAbout(moved, toBridge, target, spin) }
+        })
+      // The bond to the bridging oxygen leaves the ring free to spin. Pick the
+      // turn that keeps the two halves furthest apart rather than guessing one.
+      let best = null
+      for (let spin = 0; spin < 360; spin += 10) {
+        const candidate = place(spin)
+        let closest = Infinity
+        for (const atom of candidate) {
+          for (let i = 0; i < glucoseAtoms; i++) {
+            closest = Math.min(closest, dist(atom.position, atoms[i].position))
+          }
+        }
+        if (!best || closest > best.closest) best = { closest, candidate }
+      }
+      const offset = atoms.length
+      for (const atom of best.candidate) atoms.push(atom)
+      for (const link of frag.links) {
+        bonds.push({ a: link.a + offset, b: link.b + offset, order: link.order, length: link.length })
+      }
+      bonds.push({ a: linkIndex, b: offset, order: 1, length: glycosidic })
+      return { atoms, bonds }
+    },
+  },
+  {
+    id: 'benzaldehyde',
+    formula: 'C7H6O',
+    formulaDisplayOverride: 'C6H5CHO',
+    name: 'Benzaldehyde',
+    nameZh: '苯甲醛',
+    category: 'organic',
+    shape: 'planar-ring',
+    shapeZh: '苯环 + 醛基',
+    idealized: true,
+    summaryZh:
+      '苦杏仁的气味。杏仁、桃核、樱桃核里的苦杏仁苷水解会同时放出它和氰化氢 —— 香味与毒性来自同一个反应，所以生苦杏仁不能多吃。',
+    summaryEn:
+      'The smell of bitter almonds. Amygdalin in almond, peach and cherry kernels hydrolyses to release it together with hydrogen cyanide — the scent and the poison come from one and the same reaction.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cAldehyde = 1.48
+      const co = 1.212
+      const aldehydeH = 1.11
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      const aldehydeC = mul(norm(ringCarbons[0]), cc + cAldehyde)
+      atoms.push({ element: 'C', position: aldehydeC })
+      bonds.push({ a: 0, b: 6, order: 1, length: cAldehyde })
+      atoms.push({ element: 'O', position: inPlane(aldehydeC, ringCarbons[0], 124, co, normal, 1) })
+      bonds.push({ a: 6, b: 7, order: 2, length: co })
+      atoms.push({
+        element: 'H',
+        position: inPlane(aldehydeC, ringCarbons[0], 115, aldehydeH, normal, -1),
+      })
+      bonds.push({ a: 6, b: 8, order: 1, length: aldehydeH })
+      for (let i = 1; i < 6; i++) {
+        atoms.push({ element: 'H', position: mul(norm(ringCarbons[i]), cc + chRing) })
+        bonds.push({ a: i, b: atoms.length - 1, order: 1, length: chRing })
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]], planar: true },
+  },
+  {
+    id: 'isoamylacetate',
+    formula: 'C7H14O2',
+    name: 'Isoamyl acetate',
+    nameZh: '乙酸异戊酯',
+    category: 'organic',
+    shape: 'ester-chain',
+    shapeZh: '酯 + 支链',
+    summaryZh:
+      '香蕉和梨的味道，俗称"香蕉水"。酯类普遍闻起来像水果，这是最典型的一个。它也是蜜蜂的报警信息素 —— 一只蜂蜇人后释放它，同伴便循味而来。',
+    summaryEn:
+      'The smell of banana and pear, and the classic example of why esters smell fruity. It doubles as a honeybee alarm pheromone: one sting releases it, and the rest of the hive follows the scent in.',
+    build() {
+      const cMethyl = 1.5
+      const co = 1.21
+      const cEsterO = 1.34
+      const oAlkyl = 1.45
+      const cc = 1.52
+      const ch = 1.09
+      const chMethyl = 1.09
+      const normal = [0, 0, 1]
+      // Backbone: CH3-C(=O)-O-CH2-CH2-CH(CH3)2, drawn extended in one plane.
+      const [methylC, carbonylC, esterO, ch2a, ch2b, methine] = planarChain(
+        [0, 0, 0],
+        [cMethyl, 0, 0],
+        [
+          { angle: 111, length: cEsterO, side: 1 },
+          { angle: 116, length: oAlkyl, side: -1 },
+          { angle: 109, length: cc, side: 1 },
+          { angle: 112, length: cc, side: -1 },
+        ],
+      )
+      const atoms = [
+        { element: 'C', position: methylC },
+        { element: 'C', position: carbonylC },
+        { element: 'O', position: esterO },
+        { element: 'C', position: ch2a },
+        { element: 'C', position: ch2b },
+        { element: 'C', position: methine },
+      ]
+      const bonds = [
+        { a: 0, b: 1, order: 1, length: cMethyl },
+        { a: 1, b: 2, order: 1, length: cEsterO },
+        { a: 2, b: 3, order: 1, length: oAlkyl },
+        { a: 3, b: 4, order: 1, length: cc },
+        { a: 4, b: 5, order: 1, length: cc },
+      ]
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      push('O', inPlane(carbonylC, methylC, 125, co, normal, -1), 1, co, 2)
+      for (const h of methyl(methylC, carbonylC, chMethyl)) push('H', h, 0, chMethyl)
+      for (const p of completeSp3(ch2a, esterO, ch2b, 108, ch)) push('H', p, 3, ch)
+      for (const p of completeSp3(ch2b, ch2a, methine, 107, ch)) push('H', p, 4, ch)
+      const branches = coneDirections(sub(methine, ch2b), 3, TETRAHEDRAL_CONE, 180)
+      for (const direction of branches.slice(0, 2)) {
+        const carbon = add(methine, mul(direction, cc))
+        const index = push('C', carbon, 5, cc)
+        for (const h of methyl(carbon, methine, chMethyl)) push('H', h, index, chMethyl)
+      }
+      push('H', add(methine, mul(branches[2], ch)), 5, ch)
+      return { atoms, bonds }
+    },
+  },
+  {
+    id: 'adipicacid',
+    formula: 'C6H10O4',
+    name: 'Adipic acid',
+    nameZh: '己二酸',
+    category: 'organic',
+    shape: 'zigzag-chain',
+    shapeZh: '锯齿链 + 两端羧基',
+    summaryZh:
+      '与己二胺缩聚就是尼龙 66 —— 丝袜、伞布、安全带、牙刷毛都从这里来。食品工业也用它做酸味剂，泡打粉里那点酸就可能是它。',
+    summaryEn:
+      'Condensed with hexamethylenediamine it becomes nylon 66 — stockings, umbrella fabric, seat belts, toothbrush bristles. Food makers also use it as an acidulant; the sour part of some baking powders is this molecule.',
+    build() {
+      const cc = 1.526
+      const cSp2 = 1.51
+      const co = 1.214
+      const coh = 1.31
+      const ch = 1.095
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const carbons = planarChain([0, 0, 0], [cSp2, 0, 0], [
+        { angle: 112.7, length: cc, side: 1 },
+        { angle: 112.7, length: cc, side: -1 },
+        { angle: 112.7, length: cc, side: 1 },
+        { angle: 112.7, length: cSp2, side: -1 },
+      ])
+      const atoms = carbons.map((p) => ({ element: 'C', position: p }))
+      const bonds = carbons.slice(1).map((_, i) => ({
+        a: i,
+        b: i + 1,
+        order: 1,
+        length: i === 0 || i === 4 ? cSp2 : cc,
+      }))
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      for (const [index, centre, anchor] of [
+        [0, carbons[0], carbons[1]],
+        [5, carbons[5], carbons[4]],
+      ]) {
+        push('O', inPlane(centre, anchor, 122, co, normal, 1), index, co, 2)
+        const oAcid = inPlane(centre, anchor, 114, coh, normal, -1)
+        const oIndex = push('O', oAcid, index, coh)
+        push('H', inPlane(oAcid, centre, 106, oh, normal, -1), oIndex, oh)
+      }
+      for (let i = 1; i < 5; i++) {
+        for (const p of completeSp3(carbons[i], carbons[i - 1], carbons[i + 1], 106.5, ch)) {
+          push('H', p, i, ch)
+        }
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[1, 0, 2, 112.7]] },
+  },
+  {
+    id: 'bisphenola',
+    formula: 'C15H16O2',
+    name: 'Bisphenol A',
+    nameZh: '双酚 A',
+    category: 'organic',
+    shape: 'two-rings',
+    shapeZh: '双苯环 + 季碳',
+    idealized: true,
+    summaryZh:
+      '聚碳酸酯和环氧树脂的原料：水壶、眼镜片、罐头内涂层、热敏纸小票都可能含它。它的形状与雌激素有几分相似，能弱结合雌激素受体，因此婴幼儿用品普遍改用"不含 BPA"的替代材料。',
+    summaryEn:
+      'The feedstock of polycarbonate and epoxy resin — bottles, lens blanks, tin-can linings, till receipts. Its shape is close enough to oestrogen to bind the receptor weakly, which is why baby products moved to BPA-free alternatives.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cAryl = 1.53
+      const cMethyl = 1.54
+      const cPhenolO = 1.37
+      const chMethyl = 1.09
+      const oh = 0.97
+      const centre = [0, 0, 0]
+      const [dRingA, dRingB, dMethylA, dMethylB] = TETRAHEDRON
+      const atoms = [{ element: 'C', position: centre }]
+      const bonds = []
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      // Both rings are hung in the plane spanned by their own bond and the normal
+      // shared by the two aryl bonds: the propeller shape that keeps the ortho
+      // hydrogens of the two rings apart.
+      const shared = cross(dRingA, dRingB)
+      for (const direction of [dRingA, dRingB]) {
+        const ipso = mul(direction, cAryl)
+        const vertices = ringAtVertex(ipso, direction, shared, 6, cc)
+        const ringCentre = mul(
+          vertices.reduce((s, p) => add(s, p), [0, 0, 0]),
+          1 / 6,
+        )
+        const first = push('C', vertices[0], 0, cAryl)
+        const indices = [first]
+        for (let i = 1; i < 6; i++) {
+          indices.push(push('C', vertices[i], indices[i - 1], cc, i % 2 === 0 ? 2 : 1))
+        }
+        bonds.push({ a: indices[5], b: first, order: 2, length: cc })
+        const outward = (p, distance) => add(p, mul(norm(sub(p, ringCentre)), distance))
+        const oxygen = outward(vertices[3], cPhenolO)
+        const oIndex = push('O', oxygen, indices[3], cPhenolO)
+        push('H', inPlane(oxygen, vertices[3], 108, oh, shared, 1), oIndex, oh)
+        for (const i of [1, 2, 4, 5]) {
+          push('H', outward(vertices[i], chRing), indices[i], chRing)
+        }
+      }
+      for (const direction of [dMethylA, dMethylB]) {
+        const carbon = mul(direction, cMethyl)
+        const index = push('C', carbon, 0, cMethyl)
+        for (const h of methyl(carbon, centre, chMethyl)) push('H', h, index, chMethyl)
+      }
+      return { atoms, bonds }
+    },
+  },
+  {
+    id: 'capsaicin',
+    formula: 'C18H27NO3',
+    name: 'Capsaicin',
+    nameZh: '辣椒素',
+    category: 'organic',
+    shape: 'ring-and-tail',
+    shapeZh: '苯环 + 酰胺长尾',
+    idealized: true,
+    summaryZh:
+      '辣其实不是味觉，而是痛觉：辣椒素直接打开 TRPV1 通道 —— 这个通道本来是用来感知 43°C 以上高温的，于是大脑收到"烫"的信号。它不溶于水，所以喝水没用，喝牛奶或吃油脂才有效。',
+    summaryEn:
+      'Heat from chilli is not a taste but a pain signal: capsaicin opens TRPV1, the channel that normally reports temperatures above 43°C, so the brain is told you are being burnt. It does not dissolve in water, which is why water does not help and milk or fat does.',
+    build() {
+      const cc = 1.397
+      const chRing = 1.084
+      const cBenzyl = 1.51
+      const cn = 1.46
+      const amideC = 1.34
+      const amideO = 1.23
+      const ccChain = 1.526
+      const cAllylic = 1.5
+      const cd = 1.33
+      const cPhenolO = 1.36
+      const cMethoxyO = 1.37
+      const oMethyl = 1.43
+      const ch = 1.09
+      const chMethyl = 1.09
+      const nh = 1.01
+      const oh = 0.97
+      const normal = [0, 0, 1]
+      const atoms = []
+      const bonds = []
+      const ringCarbons = ring([0, 0, 0], 6, cc)
+      ringCarbons.forEach((p) => atoms.push({ element: 'C', position: p }))
+      for (let i = 0; i < 6; i++) {
+        bonds.push({ a: i, b: (i + 1) % 6, order: i % 2 === 0 ? 2 : 1, length: cc })
+      }
+      const push = (element, position, from, length, order = 1) => {
+        atoms.push({ element, position })
+        bonds.push({ a: from, b: atoms.length - 1, order, length })
+        return atoms.length - 1
+      }
+      // Vanillyl head: benzylic CH2 on 0, methoxy on 2, hydroxyl on 3.
+      const benzylic = mul(norm(ringCarbons[0]), cc + cBenzyl)
+      const benzylicIndex = push('C', benzylic, 0, cBenzyl)
+      const nitrogen = extendAnti(ringCarbons[1], ringCarbons[0], benzylic, 112, cn)
+      const nIndex = push('N', nitrogen, benzylicIndex, cn)
+      const carbonyl = extendAnti(ringCarbons[0], benzylic, nitrogen, 122, amideC)
+      const carbonylIndex = push('C', carbonyl, nIndex, amideC)
+      const amidePlane = cross(sub(nitrogen, benzylic), sub(carbonyl, nitrogen))
+      // A trans amide: the tail leaves anti to the benzylic carbon, so the
+      // carbonyl oxygen takes the other side and the N-H faces the oxygen.
+      const c2 = extendAnti(benzylic, nitrogen, carbonyl, 116, ccChain)
+      const c2Index = push('C', c2, carbonylIndex, ccChain)
+      const oxygen = furthestFrom(
+        [1, -1].map((side) => inPlane(carbonyl, nitrogen, 122, amideO, amidePlane, side)),
+        c2,
+      )
+      push('O', oxygen, carbonylIndex, amideO, 2)
+      push(
+        'H',
+        furthestFrom(
+          [1, -1].map((side) => inPlane(nitrogen, carbonyl, 118, nh, amidePlane, side)),
+          benzylic,
+        ),
+        nIndex,
+        nh,
+      )
+      for (const p of completeSp3(benzylic, ringCarbons[0], nitrogen, 107, ch)) {
+        push('H', p, benzylicIndex, ch)
+      }
+      // The nonenamide tail, walked one carbon at a time: four CH2, a trans
+      // double bond, then the isopropyl end.
+      const tail = [c2]
+      let back2 = nitrogen
+      let back1 = carbonyl
+      let head = c2
+      let headIndex = c2Index
+      const extend = (angle, length, order = 1) => {
+        const position = extendAnti(back2, back1, head, angle, length)
+        const index = push('C', position, headIndex, length, order)
+        back2 = back1
+        back1 = head
+        head = position
+        headIndex = index
+        tail.push(position)
+        return index
+      }
+      const tailIndices = [
+        c2Index,
+        extend(112, ccChain), // C3
+        extend(112, ccChain), // C4
+        extend(112, ccChain), // C5
+        extend(112, cAllylic), // C6
+        extend(125, cd, 2), // C7, across the double bond
+        extend(125, cAllylic), // C8
+        extend(112, ccChain), // C9
+      ]
+      for (let i = 0; i < 4; i++) {
+        const before = i === 0 ? carbonyl : tail[i - 1]
+        for (const p of completeSp3(tail[i], before, tail[i + 1], 107, ch)) {
+          push('H', p, tailIndices[i], ch)
+        }
+      }
+      push('H', extendAnti(tail[5], tail[3], tail[4], 118, ch), tailIndices[4], ch)
+      push('H', extendAnti(tail[4], tail[6], tail[5], 118, ch), tailIndices[5], ch)
+      const [methylDirection, hDirection] = completeSp3(tail[6], tail[5], tail[7], 108, 1)
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+      const extraMethyl = along(tail[6], methylDirection, ccChain)
+      const extraIndex = push('C', extraMethyl, tailIndices[6], ccChain)
+      push('H', along(tail[6], hDirection, ch), tailIndices[6], ch)
+      for (const h of methyl(extraMethyl, tail[6], chMethyl)) push('H', h, extraIndex, chMethyl)
+      for (const h of methyl(tail[7], tail[6], chMethyl)) push('H', h, tailIndices[7], chMethyl)
+      // Methoxy on ring position 2, turned away from the neighbouring hydroxyl.
+      const methoxyO = mul(norm(ringCarbons[2]), cc + cMethoxyO)
+      const methoxyIndex = push('O', methoxyO, 2, cMethoxyO)
+      const methoxyC = inPlane(methoxyO, ringCarbons[2], 118, oMethyl, normal, -1)
+      const methoxyCIndex = push('C', methoxyC, methoxyIndex, oMethyl)
+      for (const h of methyl(methoxyC, methoxyO, chMethyl)) push('H', h, methoxyCIndex, chMethyl)
+      const phenolO = mul(norm(ringCarbons[3]), cc + cPhenolO)
+      const phenolIndex = push('O', phenolO, 3, cPhenolO)
+      push('H', inPlane(phenolO, ringCarbons[3], 108, oh, normal, -1), phenolIndex, oh)
+      for (const index of [1, 4, 5]) {
+        push('H', mul(norm(ringCarbons[index]), cc + chRing), index, chRing)
+      }
+      return { atoms, bonds }
+    },
+    checks: { angles: [[0, 1, 5, 120]] },
   },
 ]
 
