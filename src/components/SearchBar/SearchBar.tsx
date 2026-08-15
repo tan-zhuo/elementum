@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { searchElements } from '../../data/elements'
+import { searchMolecules } from '../../data/molecules'
 import { useAppStore } from '../../stores/useAppStore'
 import { translate } from '../../i18n'
 
@@ -8,6 +9,8 @@ export function SearchBar() {
   const query = useAppStore((s) => s.query)
   const setQuery = useAppStore((s) => s.setQuery)
   const select = useAppStore((s) => s.select)
+  const selectMolecule = useAppStore((s) => s.selectMolecule)
+  const view = useAppStore((s) => s.view)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // "/" focuses search, the way it does in most reference sites. Ignored while the
@@ -26,6 +29,13 @@ export function SearchBar() {
   }, [])
 
   const submitTopMatch = () => {
+    if (view === 'molecules') {
+      const [topMolecule] = searchMolecules(query)
+      if (topMolecule === undefined) return
+      selectMolecule(topMolecule)
+      inputRef.current?.blur()
+      return
+    }
     const [top] = searchElements(query)
     if (top === undefined) return
     select(top)
@@ -34,6 +44,8 @@ export function SearchBar() {
     // opened.
     inputRef.current?.blur()
   }
+
+  const placeholderKey = view === 'molecules' ? 'moleculeSearchPlaceholder' : 'searchPlaceholder'
 
   return (
     <div className="relative w-full">
@@ -59,8 +71,8 @@ export function SearchBar() {
             inputRef.current?.blur()
           }
         }}
-        placeholder={translate('searchPlaceholder', locale)}
-        aria-label={translate('searchPlaceholder', locale)}
+        placeholder={translate(placeholderKey, locale)}
+        aria-label={translate(placeholderKey, locale)}
         className="w-full rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-9 pr-16 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400/50 focus:bg-white/[0.06] focus:outline-none focus:ring-1 focus:ring-cyan-400/40 [&::-webkit-search-cancel-button]:appearance-none"
       />
 

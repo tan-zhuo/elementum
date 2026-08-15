@@ -1,3 +1,5 @@
+import { fitDistance } from '../../lib/camera'
+
 /**
  * Pure geometry helpers for the Bohr-style atom scene. Kept out of AtomScene.tsx so
  * that file only exports components (and React Fast Refresh keeps working).
@@ -12,26 +14,14 @@ const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 /** Total spread of shell tilts, radians. Keeps shells countable but clearly 3D. */
 const TILT_SPREAD = (70 * Math.PI) / 180
 
-/** Vertical field of view of the scene camera, degrees. */
-export const CAMERA_FOV = 45
-
 export function shellRadius(index: number): number {
   return FIRST_SHELL_RADIUS + index * SHELL_SPACING
 }
 
-/**
- * Camera distance that frames every shell with a little margin.
- *
- * `fov` is the *vertical* field of view, so a portrait canvas sees a much narrower
- * slice horizontally. Dividing by `min(1, aspect)` fits whichever axis is tighter —
- * without it, tall narrow panels clip the outer shells at the left and right edges.
- */
+/** Camera distance that frames every shell with a little margin. */
 export function cameraDistance(shellCount: number, aspect = 1): number {
   // Pad past the orbit path so the electrons riding on it are not half cut off.
-  const outer = shellRadius(shellCount - 1) + 0.35
-  const halfFov = (CAMERA_FOV / 2) * (Math.PI / 180)
-  const fit = outer / (Math.tan(halfFov) * Math.min(1, aspect))
-  return Math.max(6, fit * 1.12)
+  return fitDistance(shellRadius(shellCount - 1) + 0.35, aspect)
 }
 
 /**

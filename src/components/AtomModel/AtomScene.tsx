@@ -11,6 +11,7 @@ import {
   shellOrientation,
   shellRadius,
 } from './geometry'
+import { orbitPosition } from '../../lib/camera'
 
 /** Derived from the component so this does not depend on drei's transitive
  *  three-stdlib package being hoisted. */
@@ -195,8 +196,7 @@ export function AtomScene({
   useEffect(() => {
     const controls = controlsRef.current
     if (!controls) return
-    const d = distanceRef.current
-    controls.object.position.set(d * 0.35, d * 0.42, d * 0.84)
+    controls.object.position.set(...orbitPosition(distanceRef.current))
     controls.target.set(0, 0, 0)
     controls.update()
   }, [shells.length, resetToken])

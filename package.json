@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:data": "node scripts/build-data.mjs",
+    "build:data": "node scripts/build-data.mjs && node scripts/build-molecules.mjs",
     "lint": "oxlint",
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview"

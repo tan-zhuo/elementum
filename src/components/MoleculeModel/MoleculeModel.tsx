@@ -1,42 +1,40 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Canvas } from '@react-three/fiber'
-import type { Element } from '../../types/element'
-import { SHELL_COLORS, SHELL_LABELS } from '../../data/categories'
+import type { Molecule, MoleculeStyle } from '../../types/molecule'
+import { atomColor, composition } from '../../data/molecules'
 import { useAppStore } from '../../stores/useAppStore'
 import { translate } from '../../i18n'
-import { dampBright } from '../../lib/color'
+import { CAMERA_FOV, fitDistance, orbitPosition } from '../../lib/camera'
 import { supportsWebGL } from '../../lib/webgl'
 import { ViewerButton } from '../viewer/ViewerButton'
-import { AtomScene } from './AtomScene'
-import { cameraDistance } from './geometry'
-import { CAMERA_FOV, orbitPosition } from '../../lib/camera'
+import { MoleculeScene } from './MoleculeScene'
 
-interface AtomModelProps {
-  element: Element
+const STYLE_KEYS: MoleculeStyle[] = ['ball-stick', 'space-filling', 'stick']
+
+const STYLE_LABELS: Record<MoleculeStyle, { zh: string; en: string }> = {
+  'ball-stick': { zh: '球棍', en: 'Ball & stick' },
+  'space-filling': { zh: '空间填充', en: 'Space filling' },
+  stick: { zh: '棍状', en: 'Stick' },
 }
 
-export function AtomModel({ element }: AtomModelProps) {
+export function MoleculeModel({ molecule }: { molecule: Molecule }) {
   const locale = useAppStore((s) => s.locale)
+  const style = useAppStore((s) => s.moleculeStyle)
+  const setStyle = useAppStore((s) => s.setMoleculeStyle)
+  const showLabels = useAppStore((s) => s.moleculeLabels)
+  const setShowLabels = useAppStore((s) => s.setMoleculeLabels)
   const autoRotate = useAppStore((s) => s.autoRotate)
-  const animateElectrons = useAppStore((s) => s.animateElectrons)
-  const showCloud = useAppStore((s) => s.showCloud)
-  const fullscreen = useAppStore((s) => s.viewerFullscreen)
   const setAutoRotate = useAppStore((s) => s.setAutoRotate)
-  const setAnimateElectrons = useAppStore((s) => s.setAnimateElectrons)
-  const setShowCloud = useAppStore((s) => s.setShowCloud)
+  const fullscreen = useAppStore((s) => s.viewerFullscreen)
   const setFullscreen = useAppStore((s) => s.setViewerFullscreen)
 
   const t = useCallback((key: Parameters<typeof translate>[0]) => translate(key, locale), [locale])
 
-  // Incrementing this re-frames the camera without remounting the canvas.
   const [resetToken, setResetToken] = useState(0)
   const hasWebGL = useMemo(() => supportsWebGL(), [])
-
-  // CPK colour where the data has one, damped so near-white elements (H, He, F)
-  // do not render as a blown-out disc.
-  const nucleusColor = dampBright(element.cpkHex ? `#${element.cpkHex}` : '#CBD5E1')
-  const distance = cameraDistance(element.shells.length)
+  const distance = fitDistance(molecule.extent, 1, 1.15, 4)
+  const elements = useMemo(() => composition(molecule), [molecule])
 
   // Escape leaves fullscreen. Capture phase so it wins over the detail panel's own
   // Escape handler, which would otherwise close the panel underneath.
@@ -69,29 +67,23 @@ export function AtomModel({ element }: AtomModelProps) {
     >
       <div className="relative flex-1">
         <Canvas
-          // Remounting per element would drop the WebGL context on every click; the
-          // scene swaps its own contents instead.
-          // Starting distance assumes a square canvas; AtomScene re-frames against
-          // the real aspect ratio as soon as it knows the viewport size.
           camera={{ position: orbitPosition(distance), fov: CAMERA_FOV }}
           dpr={[1, 2]}
           gl={{ antialias: true, powerPreference: 'high-performance' }}
         >
-          <AtomScene
-            shells={element.shells}
-            atomicNumber={element.number}
-            color={nucleusColor}
+          <MoleculeScene
+            molecule={molecule}
+            style={style}
+            showLabels={showLabels}
             autoRotate={autoRotate}
-            animateElectrons={animateElectrons}
-            showCloud={showCloud}
             resetToken={resetToken}
           />
         </Canvas>
 
         <div className="pointer-events-none absolute left-3 top-3 select-none">
-          <div className="text-2xl font-semibold text-white/90">{element.symbol}</div>
+          <div className="text-2xl font-semibold text-white/90">{molecule.formulaDisplay}</div>
           <div className="text-xs text-slate-400">
-            {element.number} · {element.shells.length} {t('shell')}
+            {molecule.atoms.length} {t('atoms')} · {molecule.bonds.length} {t('bonds')}
           </div>
         </div>
 
@@ -100,40 +92,38 @@ export function AtomModel({ element }: AtomModelProps) {
         </div>
       </div>
 
-      {/* Shell legend: colours match the orbit rings in the scene. */}
+      {/* Element legend: colours match the atom spheres (CPK convention). */}
       <div className="flex flex-wrap items-center gap-1.5 border-t border-white/5 px-3 py-2">
-        {element.shells.map((count, i) => (
+        {elements.map(({ symbol, count }) => (
           <span
-            key={i}
+            key={symbol}
             className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[11px] text-slate-300"
-            title={`${SHELL_LABELS[i]} ${t('shell')}: ${count} ${t('electrons')}`}
           >
             <span
               aria-hidden
               className="h-2 w-2 rounded-full"
               style={{
-                backgroundColor: SHELL_COLORS[i % SHELL_COLORS.length],
-                boxShadow: `0 0 6px ${SHELL_COLORS[i % SHELL_COLORS.length]}`,
+                backgroundColor: atomColor(symbol),
+                boxShadow: `0 0 6px ${atomColor(symbol)}`,
               }}
             />
-            <span className="font-medium text-slate-200">{SHELL_LABELS[i]}</span>
-            <span className="tabular-nums text-slate-400">{count}</span>
+            <span className="font-medium text-slate-200">{symbol}</span>
+            <span className="tabular-nums text-slate-400">×{count}</span>
           </span>
         ))}
       </div>
 
       <div className="flex flex-wrap gap-1.5 border-t border-white/5 px-3 py-2">
+        {STYLE_KEYS.map((key) => (
+          <ViewerButton key={key} active={style === key} onClick={() => setStyle(key)}>
+            {STYLE_LABELS[key][locale]}
+          </ViewerButton>
+        ))}
+        <ViewerButton active={showLabels} onClick={() => setShowLabels(!showLabels)}>
+          {t('atomLabels')}
+        </ViewerButton>
         <ViewerButton active={autoRotate} onClick={() => setAutoRotate(!autoRotate)}>
           {t('autoRotate')}
-        </ViewerButton>
-        <ViewerButton
-          active={animateElectrons}
-          onClick={() => setAnimateElectrons(!animateElectrons)}
-        >
-          {t('animateElectrons')}
-        </ViewerButton>
-        <ViewerButton active={showCloud} onClick={() => setShowCloud(!showCloud)}>
-          {t('electronCloud')}
         </ViewerButton>
         <ViewerButton active={false} onClick={() => setResetToken((n) => n + 1)}>
           {t('resetView')}
@@ -145,7 +135,5 @@ export function AtomModel({ element }: AtomModelProps) {
     </div>
   )
 
-  // Portalled to the body so the fixed overlay is never trapped by an ancestor's
-  // transform or overflow.
   return fullscreen ? createPortal(viewer, document.body) : viewer
 }

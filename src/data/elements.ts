@@ -9,8 +9,14 @@ export const ELEMENTS = raw as unknown as Element[]
 /** Index by atomic number for O(1) lookup; atomic numbers are 1-based. */
 const BY_NUMBER = new Map(ELEMENTS.map((el) => [el.number, el]))
 
+const BY_SYMBOL = new Map(ELEMENTS.map((el) => [el.symbol, el]))
+
 export function getElement(number: number): Element | undefined {
   return BY_NUMBER.get(number)
+}
+
+export function getElementBySymbol(symbol: string): Element | undefined {
+  return BY_SYMBOL.get(symbol)
 }
 
 /** Display name in the active locale. */
