@@ -4,6 +4,7 @@ import { getElement } from './data/elements'
 import { MOLECULES, getMolecule } from './data/molecules'
 import { useAppStore } from './stores/useAppStore'
 import { translate } from './i18n'
+import { afterFirstPaint, dismissSplash } from './lib/splash'
 import { PeriodicTable } from './components/PeriodicTable/PeriodicTable'
 import { SearchBar } from './components/SearchBar/SearchBar'
 import { CategoryFilter } from './components/CategoryFilter/CategoryFilter'
@@ -82,6 +83,12 @@ export default function App() {
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
     document.title = `${translate('appTitle', locale)} · ${translate('appSubtitle', locale)}`
   }, [locale])
+
+  // Hand off from the inlined splash once the table is genuinely on screen. The
+  // splash enforces its own minimum play time from here.
+  useEffect(() => {
+    afterFirstPaint(dismissSplash)
+  }, [])
 
   // The detail panel scrolls internally; locking the body avoids a second
   // scrollbar and the scroll-chaining that comes with it.

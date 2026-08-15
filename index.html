@@ -8,12 +8,240 @@
     <meta name="theme-color" content="#05080f" />
     <meta
       name="description"
-      content="交互式 3D 元素周期表：118 种元素，点击查看原子核与电子层的立体结构。纯前端，支持搜索、分类筛选、属性热力图与中英文切换。"
+      content="交互式 3D 元素周期表与分子结构：118 种元素、53 种常见分子，点击查看原子核、电子层与真实三维分子构型。纯前端，支持搜索、分类筛选、属性热力图与中英文切换。"
     />
     <title>元素周期表 · 3D 交互式原子结构</title>
+
+    <!--
+      Splash screen.
+
+      Inlined rather than rendered by React so it paints on the very first frame,
+      before the JS bundle has even downloaded — otherwise the user stares at a
+      blank page first and only then sees a "loading" screen. React dismisses it
+      once it has mounted AND the minimum play time has elapsed.
+    -->
+    <style>
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.75rem;
+        background-color: #05080f;
+        background-image:
+          radial-gradient(ellipse 80% 55% at 50% 20%, rgba(56, 189, 248, 0.12), transparent),
+          radial-gradient(ellipse 60% 50% at 50% 90%, rgba(129, 140, 248, 0.09), transparent);
+        transition:
+          opacity 480ms ease,
+          visibility 480ms ease;
+      }
+
+      #splash.is-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      html.splash-active,
+      html.splash-active body {
+        overflow: hidden;
+      }
+
+      .splash-atom {
+        position: relative;
+        width: 132px;
+        height: 132px;
+      }
+
+      .splash-nucleus {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 18px;
+        height: 18px;
+        margin: -9px 0 0 -9px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 32%, #ffffff, #67e8f9 55%, #0891b2);
+        box-shadow: 0 0 18px rgba(103, 232, 249, 0.85);
+        animation: splash-pulse 2.4s ease-in-out infinite;
+      }
+
+      .splash-ring {
+        position: absolute;
+        border-radius: 50%;
+        border: 1px solid currentColor;
+        opacity: 0.4;
+        animation: splash-orbit linear infinite;
+      }
+
+      /* Each electron rides the top of its ring; rotating the ring orbits it. */
+      .splash-ring i {
+        position: absolute;
+        top: -4px;
+        left: 50%;
+        width: 7px;
+        height: 7px;
+        margin-left: -3.5px;
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 9px currentColor;
+        opacity: 1;
+      }
+
+      /* Inner shells orbit faster and alternate direction, matching the 3D model. */
+      .splash-ring-1 {
+        inset: 36px;
+        color: #5eead4;
+        animation-duration: 1.7s;
+      }
+      .splash-ring-2 {
+        inset: 18px;
+        color: #7dd3fc;
+        animation-duration: 2.5s;
+        animation-direction: reverse;
+      }
+      .splash-ring-3 {
+        inset: 0;
+        color: #818cf8;
+        animation-duration: 3.4s;
+      }
+
+      @keyframes splash-orbit {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes splash-pulse {
+        0%,
+        100% {
+          box-shadow: 0 0 18px rgba(103, 232, 249, 0.85);
+        }
+        50% {
+          box-shadow: 0 0 30px rgba(103, 232, 249, 1);
+        }
+      }
+
+      .splash-text {
+        text-align: center;
+        font-family:
+          ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans CJK SC',
+          'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      }
+
+      .splash-title {
+        font-size: 1.05rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        color: #f1f5f9;
+      }
+
+      .splash-subtitle {
+        margin-top: 0.35rem;
+        font-size: 0.7rem;
+        letter-spacing: 0.06em;
+        color: #64748b;
+      }
+
+      .splash-bar {
+        width: 160px;
+        height: 2px;
+        border-radius: 2px;
+        overflow: hidden;
+        background: rgba(148, 163, 184, 0.16);
+      }
+
+      .splash-bar span {
+        display: block;
+        height: 100%;
+        width: 0;
+        border-radius: 2px;
+        background: linear-gradient(90deg, #5eead4, #7dd3fc, #818cf8);
+        /* Duration is set from JS so the bar and the minimum wait cannot drift. */
+        animation: splash-fill var(--splash-duration, 2200ms) ease-out forwards;
+      }
+
+      @keyframes splash-fill {
+        to {
+          width: 100%;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .splash-ring,
+        .splash-nucleus {
+          animation: none;
+        }
+        .splash-bar span {
+          animation-duration: 1ms;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+
+    <div id="splash" role="status" aria-live="polite" aria-label="Loading">
+      <div class="splash-atom" aria-hidden="true">
+        <span class="splash-ring splash-ring-3"><i></i></span>
+        <span class="splash-ring splash-ring-2"><i></i></span>
+        <span class="splash-ring splash-ring-1"><i></i></span>
+        <span class="splash-nucleus"></span>
+      </div>
+      <div class="splash-text">
+        <div class="splash-title" id="splash-title">元素周期表</div>
+        <div class="splash-subtitle" id="splash-subtitle">3D 交互式原子结构</div>
+      </div>
+      <div class="splash-bar"><span></span></div>
+    </div>
+
+    <script>
+      ;(function () {
+        // Single source of truth for the minimum play time: the progress bar
+        // animation and the dismissal delay both read it from here.
+        var MIN_MS = 2200
+        window.__SPLASH_MIN_MS = MIN_MS
+        window.__splashStart = Date.now()
+        document.documentElement.style.setProperty('--splash-duration', MIN_MS + 'ms')
+        document.documentElement.classList.add('splash-active')
+
+        var done = false
+        window.__hideSplash = function () {
+          if (done) return
+          done = true
+          document.documentElement.classList.remove('splash-active')
+          var el = document.getElementById('splash')
+          if (!el) return
+          el.classList.add('is-hidden')
+          // Matches the CSS transition, then drops the node entirely.
+          setTimeout(function () {
+            el.remove()
+          }, 520)
+        }
+
+        // Failsafe: if the bundle never boots, do not trap the user behind the
+        // splash forever.
+        setTimeout(window.__hideSplash, 8000)
+
+        // The locale is persisted before React loads, so the splash can already be
+        // in the right language instead of flashing Chinese at English users.
+        try {
+          var saved = JSON.parse(localStorage.getItem('elementum-prefs') || '{}')
+          if (saved && saved.state && saved.state.locale === 'en') {
+            document.documentElement.lang = 'en'
+            document.getElementById('splash-title').textContent = 'Periodic Table'
+            document.getElementById('splash-subtitle').textContent =
+              '3D Interactive Atomic Structure'
+          }
+        } catch (e) {
+          /* localStorage can throw in private mode; the Chinese default is fine. */
+        }
+      })()
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
