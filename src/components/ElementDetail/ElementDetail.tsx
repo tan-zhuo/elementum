@@ -1,10 +1,19 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import type { Element } from '../../types/element'
 import { CATEGORY_COLORS, SHELL_COLORS, SHELL_LABELS } from '../../data/categories'
-import { ELEMENTS, categoryName, elementName, formatValue, neutronCount } from '../../data/elements'
+import {
+  ELEMENTS,
+  categoryName,
+  elementEveryday,
+  elementName,
+  elementUses,
+  formatValue,
+  neutronCount,
+} from '../../data/elements'
 import { useAppStore, MAX_COMPARE } from '../../stores/useAppStore'
 import { PROPERTY_UNITS, translate } from '../../i18n'
 import { withAlpha } from '../../lib/color'
+import { UsesSection } from '../UsesSection/UsesSection'
 
 // three.js and R3F are by far the heaviest dependency here and are only needed once
 // a detail panel opens, so they load on demand rather than blocking the table.
@@ -171,6 +180,13 @@ export function ElementDetail({ element }: DetailProps) {
       {/* Body */}
       <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
         <div className="flex flex-col gap-4">
+          {/* Leads the panel: for most readers this is the part they came for. */}
+          <UsesSection
+            prose={elementUses(element, locale)}
+            everyday={elementEveryday(element, locale)}
+            color={color}
+          />
+
           <Section title={t('overview')}>
             <dl className="divide-y divide-white/5">
               <Row

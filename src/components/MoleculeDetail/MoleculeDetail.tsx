@@ -8,13 +8,16 @@ import {
   bondSummary,
   composition,
   moleculeName,
+  moleculeEveryday,
   moleculeShape,
   moleculeSummary,
+  moleculeUses,
 } from '../../data/molecules'
 import { getElementBySymbol } from '../../data/elements'
 import { useAppStore } from '../../stores/useAppStore'
 import { translate } from '../../i18n'
 import { withAlpha } from '../../lib/color'
+import { UsesSection } from '../UsesSection/UsesSection'
 
 // three.js only loads once a 3D panel is actually opened.
 const MoleculeModel = lazy(() =>
@@ -164,6 +167,12 @@ export function MoleculeDetail({ molecule }: { molecule: Molecule }) {
 
       <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         <div className="flex flex-col gap-4">
+          <UsesSection
+            prose={moleculeUses(molecule, locale)}
+            everyday={moleculeEveryday(molecule, locale)}
+            color={color}
+          />
+
           <Section title={t('overview')}>
             <dl className="divide-y divide-white/5">
               <Row label={t('molarMass')} value={`${molecule.molarMass.toFixed(3)} g/mol`} />

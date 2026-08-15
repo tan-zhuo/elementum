@@ -28,6 +28,15 @@ export function categoryName(el: Element, locale: Locale): string {
   return locale === 'zh' ? el.categoryZh : el.categoryEn
 }
 
+export function elementUses(el: Element, locale: Locale): string {
+  return locale === 'zh' ? el.usesZh : el.usesEn
+}
+
+/** Everyday applications; empty for the synthetics that genuinely have none. */
+export function elementEveryday(el: Element, locale: Locale): string[] {
+  return locale === 'zh' ? el.everydayZh : el.everydayEn
+}
+
 /**
  * Matches an element against a free-text query across symbol, both names and the
  * atomic number. Scored so that the most literal interpretation of a short query

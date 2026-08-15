@@ -51,6 +51,12 @@ const STRINGS = {
   ionizationEnergy: { zh: '第一电离能', en: 'First ionization energy' },
   atomicRadius: { zh: '原子半径', en: 'Atomic radius' },
   summary: { zh: '简介', en: 'Summary' },
+  uses: { zh: '作用与用途', en: 'What it is used for' },
+  everyday: { zh: '生活中的应用', en: 'In everyday life' },
+  noKnownUse: {
+    zh: '目前没有任何实际应用',
+    en: 'No practical applications at present',
+  },
   readMore: { zh: '在维基百科上阅读', en: 'Read on Wikipedia' },
   noData: { zh: '暂无数据', en: 'No data' },
 

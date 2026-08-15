@@ -11,6 +11,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ELEMENT_USES } from './content/element-uses.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const SOURCE = resolve(here, 'source/PeriodicTableJSON.json')
@@ -157,6 +158,9 @@ const elements = source.elements
     const nameZh = ZH_NAMES[el.number]
     if (!nameZh) throw new Error(`Missing Chinese name for element ${el.number}`)
 
+    const uses = ELEMENT_USES[el.number]
+    if (!uses) throw new Error(`Missing uses content for element ${el.number}`)
+
     return {
       number: el.number,
       symbol: el.symbol,
@@ -189,6 +193,11 @@ const elements = source.elements
       namedBy: el.named_by ?? null,
       summary: el.summary,
       source: el.source,
+      // What the element is actually for, and where it turns up in daily life.
+      usesZh: uses.zh,
+      usesEn: uses.en,
+      everydayZh: uses.itemsZh,
+      everydayEn: uses.itemsEn,
     }
   })
 
@@ -196,6 +205,18 @@ const elements = source.elements
 if (elements.length !== 118) {
   throw new Error(`Expected 118 elements, got ${elements.length}`)
 }
+// Empty prose would leave a blank section on the page; fail the build instead.
+for (const el of elements) {
+  if (!el.usesZh?.trim() || !el.usesEn?.trim()) {
+    throw new Error(`Element ${el.number} (${el.symbol}): empty uses text`)
+  }
+  if (el.everydayZh.length !== el.everydayEn.length) {
+    throw new Error(
+      `Element ${el.number} (${el.symbol}): ${el.everydayZh.length} zh items vs ${el.everydayEn.length} en`,
+    )
+  }
+}
+
 for (const el of elements) {
   const total = el.shells.reduce((a, b) => a + b, 0)
   if (total !== el.number) {
@@ -213,3 +234,7 @@ const missingRadius = elements.filter((e) => e.atomicRadius === null).length
 console.log(`Wrote ${elements.length} elements -> ${OUT}`)
 console.log(`  ${elements.filter((e) => e.cpkHex === null).length} without CPK colour`)
 console.log(`  ${missingRadius} without atomic radius (expected 22: elements 97-118)`)
+console.log(
+  `  ${elements.filter((e) => e.everydayZh.length === 0).length} without everyday applications ` +
+    `(synthetic elements with genuinely none)`,
+)

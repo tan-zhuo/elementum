@@ -64,6 +64,15 @@ export interface Element {
   summary: string
   /** Wikipedia URL. */
   source: string
+  /** One or two sentences on what the element is actually for. */
+  usesZh: string
+  usesEn: string
+  /**
+   * Concrete places it shows up in daily life. Deliberately empty for the synthetic
+   * elements that genuinely have no applications.
+   */
+  everydayZh: string[]
+  everydayEn: string[]
 }
 
 /** Numeric properties that can drive the heat map. */

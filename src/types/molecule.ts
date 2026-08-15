@@ -46,6 +46,12 @@ export interface Molecule {
   idealized: boolean
   summaryZh: string
   summaryEn: string
+  /** One or two sentences on what the molecule is actually for. */
+  usesZh: string
+  usesEn: string
+  /** Concrete places it shows up in daily life. */
+  everydayZh: string[]
+  everydayEn: string[]
   /** g/mol, summed from the standard atomic weights. */
   molarMass: number
   atoms: MoleculeAtom[]

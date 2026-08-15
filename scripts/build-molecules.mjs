@@ -15,6 +15,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { MOLECULE_USES } from './content/molecule-uses.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const OUT = resolve(here, '../src/data/molecules.json')
@@ -2198,6 +2199,9 @@ const molecules = DEFINITIONS.map((def) => {
     ...centred.map((a) => len(a.position) + (RADII[a.element]?.vdw ?? 1.5)),
   )
 
+  const uses = MOLECULE_USES[def.id]
+  if (!uses) problems.push(`${def.id}: missing uses content`)
+
   return {
     id: def.id,
     formula: def.formula,
@@ -2212,12 +2216,29 @@ const molecules = DEFINITIONS.map((def) => {
     idealized: def.idealized === true,
     summaryZh: def.summaryZh,
     summaryEn: def.summaryEn,
+    // What the molecule is for, and where it shows up in daily life.
+    usesZh: uses?.zh ?? '',
+    usesEn: uses?.en ?? '',
+    everydayZh: uses?.itemsZh ?? [],
+    everydayEn: uses?.itemsEn ?? [],
     molarMass: Number(mass.toFixed(3)),
     atoms: centred,
     bonds: enrichedBonds,
     extent: Number(extent.toFixed(3)),
   }
 })
+
+for (const id of Object.keys(MOLECULE_USES)) {
+  if (!DEFINITIONS.some((d) => d.id === id)) {
+    problems.push(`uses content for unknown molecule id "${id}"`)
+  }
+}
+for (const m of molecules) {
+  if (!m.usesZh.trim() || !m.usesEn.trim()) problems.push(`${m.id}: empty uses text`)
+  if (m.everydayZh.length !== m.everydayEn.length) {
+    problems.push(`${m.id}: ${m.everydayZh.length} zh items vs ${m.everydayEn.length} en`)
+  }
+}
 
 const CATEGORY_ORDER = ['element', 'inorganic', 'organic']
 molecules.sort((a, b) => CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category))

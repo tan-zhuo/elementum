@@ -21,6 +21,14 @@ export function moleculeSummary(m: Molecule, locale: Locale): string {
   return locale === 'zh' ? m.summaryZh : m.summaryEn
 }
 
+export function moleculeUses(m: Molecule, locale: Locale): string {
+  return locale === 'zh' ? m.usesZh : m.usesEn
+}
+
+export function moleculeEveryday(m: Molecule, locale: Locale): string[] {
+  return locale === 'zh' ? m.everydayZh : m.everydayEn
+}
+
 export function moleculeShape(m: Molecule, locale: Locale): string {
   return locale === 'zh' ? m.shapeZh : m.shape.replace(/-/g, ' ')
 }
