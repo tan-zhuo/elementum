@@ -8,6 +8,7 @@ import {
   atomColor,
   composition,
   moleculeName,
+  moleculeShape,
   searchMolecules,
 } from '../../data/molecules'
 import { useAppStore } from '../../stores/useAppStore'
@@ -55,8 +56,8 @@ function MoleculeCard({ molecule, onOpen }: { molecule: Molecule; onOpen: (id: s
             <span className="text-[10px] tabular-nums text-slate-500">{count}</span>
           </span>
         ))}
-        <span className="ml-1 text-[10px]" style={{ color }}>
-          {molecule.shapeZh && locale === 'zh' ? molecule.shapeZh : molecule.shape.replace(/-/g, ' ')}
+        <span className="ml-1 truncate text-[10px]" style={{ color }}>
+          {moleculeShape(molecule, locale)}
         </span>
       </div>
     </button>
@@ -66,16 +67,21 @@ function MoleculeCard({ molecule, onOpen }: { molecule: Molecule; onOpen: (id: s
 export function MoleculeGallery() {
   const locale = useAppStore((s) => s.locale)
   const query = useAppStore((s) => s.query)
+  const activeCategories = useAppStore((s) => s.activeMoleculeCategories)
   const selectMolecule = useAppStore((s) => s.selectMolecule)
 
   const matches = useMemo(() => new Set(searchMolecules(query)), [query])
 
   const grouped = useMemo(() => {
-    return MOLECULE_CATEGORY_ORDER.map((category) => ({
-      category,
-      items: MOLECULES.filter((m) => m.category === category && matches.has(m.id)),
-    })).filter((group) => group.items.length > 0)
-  }, [matches])
+    const categories =
+      activeCategories.length > 0 ? activeCategories : MOLECULE_CATEGORY_ORDER
+    return MOLECULE_CATEGORY_ORDER.filter((c) => categories.includes(c))
+      .map((category) => ({
+        category,
+        items: MOLECULES.filter((m) => m.category === category && matches.has(m.id)),
+      }))
+      .filter((group) => group.items.length > 0)
+  }, [matches, activeCategories])
 
   if (grouped.length === 0) {
     return (

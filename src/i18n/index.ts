@@ -114,6 +114,12 @@ const STRINGS = {
   atomLabels: { zh: '原子标签', en: 'Atom labels' },
   moleculeStructure: { zh: '3D 分子结构', en: '3D Molecular Structure' },
   viewElementDetail: { zh: '查看元素', en: 'View element' },
+  idealizedGeometry: { zh: '理想化几何', en: 'Idealised geometry' },
+  idealizedNote: {
+    zh: '坐标由理想多边形构造，实际键长略有差异',
+    en: 'Built from idealised polygons; real bond lengths vary slightly',
+  },
+  moleculeCount: { zh: '个分子', en: 'molecules' },
 
   lanthanides: { zh: '镧系', en: 'Lanthanides' },
   actinides: { zh: '锕系', en: 'Actinides' },

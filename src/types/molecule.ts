@@ -38,6 +38,12 @@ export interface Molecule {
   /** VSEPR-style shape key. */
   shape: string
   shapeZh: string
+  /**
+   * True when the coordinates come from idealised polygons (regular hexagons, a
+   * perfect truncated icosahedron) rather than measured values. Surfaced in the UI
+   * so the model never implies experimental precision it does not have.
+   */
+  idealized: boolean
   summaryZh: string
   summaryEn: string
   /** g/mol, summed from the standard atomic weights. */

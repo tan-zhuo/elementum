@@ -222,6 +222,16 @@ export function MoleculeDetail({ molecule }: { molecule: Molecule }) {
                 />
               ))}
             </dl>
+            {/* Say so rather than letting three decimal places imply measurement. */}
+            {molecule.idealized && (
+              <p className="mt-2.5 flex items-start gap-1.5 border-t border-white/5 pt-2.5 text-[11px] text-amber-300/70">
+                <span aria-hidden>⚠</span>
+                <span>
+                  <span className="font-medium">{t('idealizedGeometry')}</span> ·{' '}
+                  {t('idealizedNote')}
+                </span>
+              </p>
+            )}
           </Section>
 
           <Section title={t('summary')}>

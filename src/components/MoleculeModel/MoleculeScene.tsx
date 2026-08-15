@@ -25,8 +25,56 @@ function atomRadiusFor(symbol: string, style: MoleculeStyle): number {
   return Math.max(0.25, covalent * 0.42)
 }
 
-/** A single cylinder spanning `from` -> `to`. */
-function Stick({ from, to, color, radius }: { from: Vec3; to: Vec3; color: string; radius: number }) {
+/**
+ * Shared unit geometries and one material per element colour.
+ *
+ * Declaring `<sphereGeometry>` inside each mesh would allocate a fresh geometry per
+ * atom, which C60 turns into 150 of them. Meshes instead reference these unit
+ * primitives and carry their size in `scale`.
+ */
+function useSharedResources(molecule: Molecule, sphereSegments: number) {
+  const resources = useMemo(() => {
+    const sphere = new THREE.SphereGeometry(1, sphereSegments, sphereSegments)
+    const cylinder = new THREE.CylinderGeometry(1, 1, 1, 12, 1)
+    const materials = new Map<string, THREE.MeshStandardMaterial>()
+    for (const atom of molecule.atoms) {
+      if (materials.has(atom.element)) continue
+      materials.set(
+        atom.element,
+        new THREE.MeshStandardMaterial({
+          color: atomColor(atom.element),
+          roughness: 0.35,
+          metalness: 0.2,
+        }),
+      )
+    }
+    return { sphere, cylinder, materials }
+  }, [molecule, sphereSegments])
+
+  // Passed by prop rather than declared as JSX, so three does not dispose them for
+  // us when a mesh unmounts.
+  useEffect(
+    () => () => {
+      resources.sphere.dispose()
+      resources.cylinder.dispose()
+      resources.materials.forEach((m) => m.dispose())
+    },
+    [resources],
+  )
+
+  return resources
+}
+
+interface StickProps {
+  from: Vec3
+  to: Vec3
+  radius: number
+  geometry: THREE.CylinderGeometry
+  material: THREE.Material
+}
+
+/** A single cylinder spanning `from` -> `to`, sized entirely through `scale`. */
+function Stick({ from, to, radius, geometry, material }: StickProps) {
   const { position, quaternion, height } = useMemo(() => {
     const start = new THREE.Vector3(...from)
     const end = new THREE.Vector3(...to)
@@ -42,11 +90,24 @@ function Stick({ from, to, color, radius }: { from: Vec3; to: Vec3; color: strin
   }, [from, to])
 
   return (
-    <mesh position={position} quaternion={quaternion}>
-      <cylinderGeometry args={[radius, radius, height, 12, 1]} />
-      <meshStandardMaterial color={color} roughness={0.4} metalness={0.15} />
-    </mesh>
+    <mesh
+      position={position}
+      quaternion={quaternion}
+      scale={[radius, height, radius]}
+      geometry={geometry}
+      material={material}
+    />
   )
+}
+
+interface BondProps {
+  from: Vec3
+  to: Vec3
+  materialA: THREE.Material
+  materialB: THREE.Material
+  order: 1 | 2 | 3
+  offset?: Vec3
+  geometry: THREE.CylinderGeometry
 }
 
 /**
@@ -54,25 +115,13 @@ function Stick({ from, to, color, radius }: { from: Vec3; to: Vec3; color: strin
  *
  * Each line is split at the midpoint and coloured by the atom it touches, the
  * standard ball-and-stick convention — it makes the composition readable without
- * turning on labels. Double and triple bonds are drawn as parallel lines offset
+ * turning on labels. Bonds between two atoms of the same element skip the split and
+ * draw as one cylinder, which halves the mesh count for C60 and the other
+ * homonuclear cages. Double and triple bonds are drawn as parallel lines offset
  * along the perpendicular the data pipeline computed, which keeps the extra lines
  * inside the molecular plane for planar molecules like benzene.
  */
-function Bond({
-  from,
-  to,
-  colorA,
-  colorB,
-  order,
-  offset,
-}: {
-  from: Vec3
-  to: Vec3
-  colorA: string
-  colorB: string
-  order: 1 | 2 | 3
-  offset?: Vec3
-}) {
+function Bond({ from, to, materialA, materialB, order, offset, geometry }: BondProps) {
   const lines = useMemo(() => {
     if (order === 1 || !offset) return [0]
     if (order === 2) return [-BOND_SPLIT / 2, BOND_SPLIT / 2]
@@ -82,6 +131,7 @@ function Bond({
   // Thinner lines when a bond is drawn as two or three of them, so a triple bond
   // does not read as a single fat tube.
   const radius = lines.length === 1 ? BOND_RADIUS : BOND_RADIUS * 0.62
+  const uniform = materialA === materialB
 
   return (
     <>
@@ -91,11 +141,16 @@ function Bond({
           : [0, 0, 0]
         const a: Vec3 = [from[0] + displace[0], from[1] + displace[1], from[2] + displace[2]]
         const b: Vec3 = [to[0] + displace[0], to[1] + displace[1], to[2] + displace[2]]
+        if (uniform) {
+          return (
+            <Stick key={i} from={a} to={b} radius={radius} geometry={geometry} material={materialA} />
+          )
+        }
         const mid: Vec3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]
         return (
           <group key={i}>
-            <Stick from={a} to={mid} color={colorA} radius={radius} />
-            <Stick from={mid} to={b} color={colorB} radius={radius} />
+            <Stick from={a} to={mid} radius={radius} geometry={geometry} material={materialA} />
+            <Stick from={mid} to={b} radius={radius} geometry={geometry} material={materialB} />
           </group>
         )
       })}
@@ -122,13 +177,15 @@ export function MoleculeScene({
   const controlsRef = useRef<OrbitControlsImpl>(null)
   const size = useThree((state) => state.size)
 
+  // Fewer segments once there are enough atoms for the vertex count to matter.
+  const sphereSegments = molecule.atoms.length > 30 ? 20 : 32
+  const { sphere, cylinder, materials } = useSharedResources(molecule, sphereSegments)
+
   // Space-filling spheres reach further out than the ball-and-stick ones, so the
   // framing radius follows the active style rather than a single stored extent.
   const radius = useMemo(() => {
     const reach = Math.max(
-      ...molecule.atoms.map(
-        (a) => Math.hypot(...a.position) + atomRadiusFor(a.element, style),
-      ),
+      ...molecule.atoms.map((a) => Math.hypot(...a.position) + atomRadiusFor(a.element, style)),
     )
     return reach + 0.3
   }, [molecule, style])
@@ -145,29 +202,24 @@ export function MoleculeScene({
     controls.update()
   }, [molecule.id, style, resetToken])
 
+  // Labels would be unreadable stacked 60 deep on a fullerene.
+  const labelsWorthShowing = showLabels && molecule.atoms.length <= 24
+
   return (
     <>
       <ambientLight intensity={0.65} />
       <directionalLight position={[6, 8, 10]} intensity={2.4} />
       <directionalLight position={[-8, -4, -6]} intensity={0.9} color="#7DD3FC" />
 
-      {molecule.atoms.map((atom, i) => {
-        const color = atomColor(atom.element)
-        return (
-          <mesh key={i} position={atom.position}>
-            <sphereGeometry args={[atomRadiusFor(atom.element, style), 32, 32]} />
-            <meshStandardMaterial
-              color={color}
-              roughness={0.35}
-              metalness={0.2}
-              // Space-filling spheres overlap heavily; a little transparency keeps
-              // the shape of the interior readable.
-              transparent={style === 'space-filling'}
-              opacity={style === 'space-filling' ? 0.95 : 1}
-            />
-          </mesh>
-        )
-      })}
+      {molecule.atoms.map((atom, i) => (
+        <mesh
+          key={i}
+          position={atom.position}
+          scale={atomRadiusFor(atom.element, style)}
+          geometry={sphere}
+          material={materials.get(atom.element)}
+        />
+      ))}
 
       {/* Space-filling has no visible gaps, so bonds would be hidden anyway. */}
       {style !== 'space-filling' &&
@@ -176,14 +228,15 @@ export function MoleculeScene({
             key={i}
             from={molecule.atoms[bond.a].position}
             to={molecule.atoms[bond.b].position}
-            colorA={atomColor(molecule.atoms[bond.a].element)}
-            colorB={atomColor(molecule.atoms[bond.b].element)}
+            materialA={materials.get(molecule.atoms[bond.a].element)!}
+            materialB={materials.get(molecule.atoms[bond.b].element)!}
             order={bond.order}
             offset={bond.offset}
+            geometry={cylinder}
           />
         ))}
 
-      {showLabels &&
+      {labelsWorthShowing &&
         molecule.atoms.map((atom, i) => (
           <Html
             key={i}

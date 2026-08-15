@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import type { View } from './stores/useAppStore'
 import { getElement } from './data/elements'
-import { getMolecule } from './data/molecules'
+import { MOLECULES, getMolecule } from './data/molecules'
 import { useAppStore } from './stores/useAppStore'
 import { translate } from './i18n'
 import { PeriodicTable } from './components/PeriodicTable/PeriodicTable'
@@ -10,6 +10,7 @@ import { CategoryFilter } from './components/CategoryFilter/CategoryFilter'
 import { ElementDetail } from './components/ElementDetail/ElementDetail'
 import { ComparePanel } from './components/ComparePanel/ComparePanel'
 import { MoleculeGallery } from './components/MoleculeGallery/MoleculeGallery'
+import { MoleculeFilter } from './components/MoleculeGallery/MoleculeFilter'
 import { MoleculeDetail } from './components/MoleculeDetail/MoleculeDetail'
 
 function LocaleToggle() {
@@ -129,8 +130,8 @@ export default function App() {
             <LocaleToggle />
           </div>
 
-          {/* Category and heat-map controls only apply to the periodic table. */}
-          {view === 'elements' && <CategoryFilter />}
+          {/* Each view brings its own filter row. */}
+          {view === 'elements' ? <CategoryFilter /> : <MoleculeFilter />}
         </div>
       </header>
 
@@ -143,7 +144,10 @@ export default function App() {
               <h2 className="text-sm font-semibold text-slate-200">
                 {translate('moleculeTitle', locale)}
               </h2>
-              <p className="text-xs text-slate-500">{translate('moleculeSubtitle', locale)}</p>
+              <p className="text-xs text-slate-500">
+                {MOLECULES.length} {translate('moleculeCount', locale)} ·{' '}
+                {translate('moleculeSubtitle', locale)}
+              </p>
             </div>
             <MoleculeGallery />
           </>

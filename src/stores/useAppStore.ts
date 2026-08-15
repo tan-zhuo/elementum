@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { CategoryKey, HeatmapKey, Locale } from '../types/element'
-import type { MoleculeStyle } from '../types/molecule'
+import type { MoleculeCategory, MoleculeStyle } from '../types/molecule'
 
 /** Top-level section of the app. */
 export type View = 'elements' | 'molecules'
@@ -19,6 +19,8 @@ interface AppState {
   query: string
   /** Empty means "no category filter". */
   activeCategories: CategoryKey[]
+  /** Empty means "no molecule category filter". */
+  activeMoleculeCategories: MoleculeCategory[]
   /** Null means colour by category. */
   heatmap: HeatmapKey | null
   /** Atomic numbers queued for side-by-side comparison, max `MAX_COMPARE`. */
@@ -44,6 +46,7 @@ interface AppState {
   select: (number: number | null) => void
   setQuery: (query: string) => void
   toggleCategory: (category: CategoryKey) => void
+  toggleMoleculeCategory: (category: MoleculeCategory) => void
   setHeatmap: (key: HeatmapKey | null) => void
   toggleCompare: (number: number) => void
   clearCompare: () => void
@@ -65,6 +68,7 @@ export const useAppStore = create<AppState>()(
       selected: null,
       query: '',
       activeCategories: [],
+      activeMoleculeCategories: [],
       heatmap: null,
       compare: [],
       autoRotate: true,
@@ -82,7 +86,15 @@ export const useAppStore = create<AppState>()(
       // Switching sections also clears the query, since the two searches index
       // completely different things.
       setView: (view) =>
-        set({ view, selected: null, selectedMolecule: null, viewerFullscreen: false, query: '' }),
+        set({
+          view,
+          selected: null,
+          selectedMolecule: null,
+          viewerFullscreen: false,
+          query: '',
+          activeCategories: [],
+          activeMoleculeCategories: [],
+        }),
 
       selectMolecule: (selectedMolecule) =>
         set(
@@ -103,6 +115,13 @@ export const useAppStore = create<AppState>()(
             : [...s.activeCategories, category],
         })),
 
+      toggleMoleculeCategory: (category) =>
+        set((s) => ({
+          activeMoleculeCategories: s.activeMoleculeCategories.includes(category)
+            ? s.activeMoleculeCategories.filter((c) => c !== category)
+            : [...s.activeMoleculeCategories, category],
+        })),
+
       setHeatmap: (heatmap) => set({ heatmap }),
 
       toggleCompare: (number) =>
@@ -116,7 +135,8 @@ export const useAppStore = create<AppState>()(
         }),
 
       clearCompare: () => set({ compare: [] }),
-      clearFilters: () => set({ query: '', activeCategories: [], heatmap: null }),
+      clearFilters: () =>
+        set({ query: '', activeCategories: [], activeMoleculeCategories: [], heatmap: null }),
       setAutoRotate: (autoRotate) => set({ autoRotate }),
       setAnimateElectrons: (animateElectrons) => set({ animateElectrons }),
       setShowCloud: (showCloud) => set({ showCloud }),
