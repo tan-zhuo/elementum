@@ -673,4 +673,10 @@ export const MOLECULE_USES = {
     itemsZh: ['辣椒的辣味（TRPV1 痛觉通道）', '镇痛贴与关节痛药膏', '防身喷雾的有效成分', '驱鸟不驱兽的天然屏障'],
     itemsEn: ['The burn of chilli, via TRPV1', 'Pain-relief patches and creams', 'The active agent in pepper spray', 'A plant defence that birds ignore'],
   },
+  cholesterol: {
+    zh: '它不是"坏东西"：每个细胞膜都需要它来维持流动性，胆汁酸、性激素、皮质醇和维生素 D 也都由它合成。人体七八成的胆固醇是自己造的，问题出在血中运输它的低密度脂蛋白过多、沉积到血管壁。',
+    en: 'Not a villain in itself: every cell membrane needs it for fluidity, and bile acids, sex hormones, cortisol and vitamin D are all made from it. Most of your cholesterol is made by your own liver; the trouble is an excess of the LDL particles that carry it, settling into artery walls.',
+    itemsZh: ['细胞膜的流动性调节', '合成性激素与皮质醇', '合成胆汁酸帮助消化脂肪', '经紫外线转化为维生素 D'],
+    itemsEn: ['Keeping cell membranes fluid', 'Precursor of sex hormones and cortisol', 'Bile acids for digesting fat', 'Turned into vitamin D by sunlight'],
+  },
 }

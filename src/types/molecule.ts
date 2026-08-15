@@ -54,10 +54,24 @@ export interface Molecule {
   everydayEn: string[]
   /** g/mol, summed from the standard atomic weights. */
   molarMass: number
-  atoms: MoleculeAtom[]
-  bonds: MoleculeBond[]
+  /**
+   * Everything below is derived from the coordinates at build time, so the gallery,
+   * the search and the readout never have to load them. The coordinates themselves
+   * live in `MoleculeGeometry`, keyed by id in a separate file.
+   */
+  atomCount: number
+  bondCounts: { single: number; double: number; triple: number }
+  composition: { symbol: string; count: number }[]
+  /** One entry per distinct bond kind, for the bond-length readout. */
+  bondTypes: { a: string; b: string; order: 1 | 2 | 3; length: number }[]
   /** Distance from the centre to the outermost atom surface — used to frame the camera. */
   extent: number
+}
+
+/** Coordinates for one molecule, loaded only when a 3D view opens. */
+export interface MoleculeGeometry {
+  atoms: MoleculeAtom[]
+  bonds: MoleculeBond[]
 }
 
 /** How the molecule is drawn. */

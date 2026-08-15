@@ -19,6 +19,9 @@ import { MOLECULE_USES } from './content/molecule-uses.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const OUT = resolve(here, '../src/data/molecules.json')
+// Coordinates live in their own file: they are 60% of the data and only the 3D
+// viewer needs them, so keeping them separate keeps the gallery's bundle small.
+const GEOMETRY_OUT = resolve(here, '../src/data/moleculeGeometry.json')
 const ELEMENTS = JSON.parse(readFileSync(resolve(here, '../src/data/elements.json'), 'utf8'))
 const MASS = new Map(ELEMENTS.map((e) => [e.symbol, e.atomicMass]))
 
@@ -154,6 +157,40 @@ function extendAnti(a, b, c, angle, distance) {
 /** Of two candidate positions, the one further from `reference`. */
 function furthestFrom(options, reference) {
   return dist(options[0], reference) > dist(options[1], reference) ? options[0] : options[1]
+}
+
+/** Of two candidate positions, the one nearer `reference`. */
+function nearestTo(options, reference) {
+  return dist(options[0], reference) < dist(options[1], reference) ? options[0] : options[1]
+}
+
+/**
+ * The direction left over at `centre` once its existing bonds are accounted for:
+ * the reverse of the summed bond directions. That is the fourth bond of a carbon
+ * that already has three, and the in-plane third bond of an sp2 centre.
+ */
+function openDirection(centre, neighbours) {
+  const sum = neighbours.reduce((total, p) => add(total, norm(sub(p, centre))), [0, 0, 0])
+  return mul(norm(sum), -1)
+}
+
+/**
+ * The position that closes a ring: exactly `bondFrom` from `from` and `bondTo`
+ * from `to`, taken in the plane through `near` and picked on that side. Both bond
+ * lengths come out exact, which is what lets a ring survive having one of its
+ * bonds shortened afterwards.
+ */
+function closeRing(from, to, bondFrom, bondTo, near) {
+  const separation = dist(from, to)
+  const axis = norm(sub(to, from))
+  const reach = (separation ** 2 + bondFrom ** 2 - bondTo ** 2) / (2 * separation)
+  const radiusSquared = bondFrom ** 2 - reach ** 2
+  if (radiusSquared <= 0) throw new Error('closeRing: the two bonds cannot meet')
+  const centre = add(from, mul(axis, reach))
+  const towards = sub(near, centre)
+  const perpendicular = norm(sub(towards, mul(axis, dot(towards, axis))))
+  const radius = Math.sqrt(radiusSquared)
+  return nearestTo([add(centre, mul(perpendicular, radius)), sub(centre, mul(perpendicular, radius))], near)
 }
 
 /** `count` alternating-side steps of the same bond and angle: a saturated backbone. */
@@ -5538,6 +5575,185 @@ const DEFINITIONS = [
     },
     checks: { angles: [[0, 1, 5, 120]] },
   },
+  {
+    id: 'cholesterol',
+    formula: 'C27H46O',
+    name: 'Cholesterol',
+    nameZh: '胆固醇',
+    category: 'organic',
+    shape: 'fused-rings',
+    shapeZh: '甾体四环 + 侧链',
+    idealized: true,
+    summaryZh:
+      '四个稠合环组成一块几乎刚性的平板，一端是羟基、一端是烃链 —— 它就这样插在细胞膜的磷脂之间，让膜既不过硬也不过软。人体的雌激素、睾酮、皮质醇和维生素 D 全都由这块骨架改造而来。',
+    summaryEn:
+      'Four fused rings make an almost rigid plate with a hydroxyl at one end and a hydrocarbon tail at the other, and it wedges between the phospholipids of a membrane to keep it neither too stiff nor too fluid. Oestrogen, testosterone, cortisol and vitamin D are all rebuilt from this same skeleton.',
+    build() {
+      const cc = 1.53
+      const cd = 1.33
+      const cAllylic = 1.505
+      const co = 1.43
+      const oh = 0.97
+      const ch = 1.096
+      const chMethyl = 1.09
+
+      // Ring A is an ideal chair. Trans-fused rings are centrosymmetric about the
+      // bond they share, so rings B and C follow by inverting the previous ring
+      // through the midpoint of that bond — they inherit its exact bonds and
+      // angles rather than being fitted by hand.
+      const [c1, c2, c3, c4, c5, c10] = puckeredRingPositions(6, cc, 111.5)
+      const invert = (p, a, b) => sub(add(a, b), p)
+      const c6Chair = invert(c1, c5, c10)
+      const c7Chair = invert(c2, c5, c10)
+      const c8 = invert(c3, c5, c10)
+      const c9 = invert(c4, c5, c10)
+      const c11 = invert(c7Chair, c8, c9)
+      const c12 = invert(c6Chair, c8, c9)
+      const c13 = invert(c5, c8, c9)
+      const c14 = invert(c10, c8, c9)
+      // Ring B carries the 5,6 double bond: C6 is pulled in to a real C=C length
+      // and C7 re-placed so the ring still closes on its declared bonds.
+      const c6 = add(c5, mul(norm(sub(c6Chair, c5)), cd))
+      const c7 = closeRing(c6, c8, cAllylic, cc, c7Chair)
+
+      // Ring D is a five-ring, so inversion cannot produce it. It is fitted onto
+      // the C13-C14 bond instead — same bond length, free to turn about that axis
+      // — and the turn is chosen to bring both fusion angles back to tetrahedral,
+      // which is what makes the C13 and C14 centres come out sane.
+      const flat = ring([0, 0, 0], 5, cc / (2 * Math.sin(Math.PI / 5)))
+      const placeRingD = (spin) =>
+        flat.map((p) => {
+          const aligned = rotateOnto(p, sub(flat[1], flat[0]), sub(c14, c13), flat[0])
+          return rotateAbout(add(aligned, sub(c13, flat[0])), sub(c14, c13), c13, spin)
+        })
+      const angleBetween = (vertex, a, b) =>
+        Math.acos(
+          Math.min(1, Math.max(-1, dot(norm(sub(a, vertex)), norm(sub(b, vertex))))),
+        ) / DEG
+      let bestRingD = null
+      for (let spin = 0; spin < 360; spin += 1) {
+        const candidate = placeRingD(spin)
+        const error =
+          (angleBetween(c13, c12, candidate[4]) - 110) ** 2 +
+          (angleBetween(c14, c8, candidate[2]) - 110) ** 2
+        if (!bestRingD || error < bestRingD.error) bestRingD = { error, candidate }
+      }
+      const [, , c15, c16, c17] = bestRingD.candidate
+
+      const atoms = []
+      const bonds = []
+      const index = {}
+      const put = (name, element, position) => {
+        atoms.push({ element, position })
+        index[name] = atoms.length - 1
+        return atoms.length - 1
+      }
+      const at = (name) => atoms[index[name]].position
+      const link = (a, b, length, order = 1) =>
+        bonds.push({ a: index[a], b: index[b], order, length })
+      const hang = (element, name, position, parent, length) => {
+        put(name, element, position)
+        link(parent, name, length)
+      }
+      const along = (from, target, distance) =>
+        add(from, mul(norm(sub(target, from)), distance))
+
+      const skeleton = {
+        c1, c2, c3, c4, c5, c6, c7, c8, c9, c10,
+        c11, c12, c13, c14, c15, c16, c17,
+      }
+      for (const [name, position] of Object.entries(skeleton)) put(name, 'C', position)
+      for (const [a, b] of [
+        ['c1', 'c2'], ['c2', 'c3'], ['c3', 'c4'], ['c4', 'c5'], ['c5', 'c10'], ['c10', 'c1'],
+        ['c6', 'c7'], ['c7', 'c8'], ['c8', 'c9'], ['c9', 'c10'],
+        ['c9', 'c11'], ['c11', 'c12'], ['c12', 'c13'], ['c13', 'c14'], ['c14', 'c8'],
+        ['c14', 'c15'], ['c15', 'c16'], ['c16', 'c17'], ['c17', 'c13'],
+      ]) {
+        link(a, b, a === 'c6' ? cAllylic : cc)
+      }
+      link('c5', 'c6', cd, 2)
+
+      // The two angular methyls sit on the leftover tetrahedral direction of each
+      // quaternary carbon, which puts them axial — the beta face of the steroid.
+      const c19 = add(c10, mul(openDirection(c10, [c1, c5, c9]), cc))
+      hang('C', 'c19', c19, 'c10', cc)
+      const c18 = add(c13, mul(openDirection(c13, [c12, c14, c17]), cc))
+      hang('C', 'c18', c18, 'c13', cc)
+
+      // The side chain leaves C17 on the same face as those methyls.
+      const c17Faces = completeSp3(c17, c13, c16, 108, 1)
+      const sideDirection = nearestTo(c17Faces, c18)
+      const otherFace = sideDirection === c17Faces[0] ? c17Faces[1] : c17Faces[0]
+      const c20 = along(c17, sideDirection, cc)
+      hang('C', 'c20', c20, 'c17', cc)
+      hang('H', 'h17', along(c17, otherFace, ch), 'c17', ch)
+      const c22 = extendAnti(c13, c17, c20, 113, cc)
+      hang('C', 'c22', c22, 'c20', cc)
+      const [c21Direction, h20Direction] = completeSp3(c20, c17, c22, 108, 1)
+      const c21 = along(c20, c21Direction, cc)
+      hang('C', 'c21', c21, 'c20', cc)
+      hang('H', 'h20', along(c20, h20Direction, ch), 'c20', ch)
+      const c23 = extendAnti(c17, c20, c22, 112, cc)
+      hang('C', 'c23', c23, 'c22', cc)
+      const c24 = extendAnti(c20, c22, c23, 112, cc)
+      hang('C', 'c24', c24, 'c23', cc)
+      const c25 = extendAnti(c22, c23, c24, 112, cc)
+      hang('C', 'c25', c25, 'c24', cc)
+      const tailBranches = coneDirections(sub(c25, c24), 3, TETRAHEDRAL_CONE, 180)
+      const c26 = add(c25, mul(tailBranches[0], cc))
+      hang('C', 'c26', c26, 'c25', cc)
+      const c27 = add(c25, mul(tailBranches[1], cc))
+      hang('C', 'c27', c27, 'c25', cc)
+      hang('H', 'h25', add(c25, mul(tailBranches[2], ch)), 'c25', ch)
+
+      // The 3-hydroxyl is equatorial; every other ring position takes hydrogens.
+      const { axial: c3Axial, equatorial: c3Equatorial } = axialEquatorial(c3, c2, c4, 109.5, 1)
+      const oxygen = along(c3, c3Equatorial, co)
+      hang('O', 'o3', oxygen, 'c3', co)
+      hang('H', 'ho3', branch(oxygen, c3, 108, oh, 0), 'o3', oh)
+      hang('H', 'h3', along(c3, c3Axial, ch), 'c3', ch)
+      let counter = 0
+      for (const [name, previous, next] of [
+        ['c1', c2, c10], ['c2', c1, c3], ['c4', c3, c5], ['c7', c6, c8],
+        ['c11', c9, c12], ['c12', c11, c13], ['c15', c14, c16], ['c16', c15, c17],
+        ['c22', c20, c23], ['c23', c22, c24], ['c24', c23, c25],
+      ]) {
+        for (const p of completeSp3(at(name), previous, next, 107, ch)) {
+          hang('H', `h${counter++}`, p, name, ch)
+        }
+      }
+      for (const [name, neighbours] of [
+        ['c8', [c7, c9, c14]],
+        ['c9', [c8, c10, c11]],
+        ['c14', [c8, c13, c15]],
+        ['c6', [c5, c7]],
+      ]) {
+        hang('H', `h${counter++}`, add(at(name), mul(openDirection(at(name), neighbours), ch)), name, ch)
+      }
+      // Five methyls in a crowded molecule: each one is turned to whichever
+      // rotation keeps its hydrogens furthest from everything already placed,
+      // rather than left on an arbitrary phase.
+      for (const [name, anchor] of [
+        ['c18', c13], ['c19', c10], ['c21', c20], ['c26', c25], ['c27', c25],
+      ]) {
+        const parent = index[name]
+        let best = null
+        for (let phase = 0; phase < 120; phase += 5) {
+          const hydrogens = methyl(at(name), anchor, chMethyl, phase)
+          let closest = Infinity
+          for (const hydrogen of hydrogens) {
+            atoms.forEach((other, i) => {
+              if (i === parent) return
+              closest = Math.min(closest, dist(hydrogen, other.position))
+            })
+          }
+          if (!best || closest > best.closest) best = { closest, hydrogens }
+        }
+        for (const p of best.hydrogens) hang('H', `h${counter++}`, p, name, chMethyl)
+      }
+      return { atoms, bonds }
+    },
+  },
 ]
 
 // ------------------------------------------------------------------- pipeline
@@ -5583,6 +5799,18 @@ function compositionMismatch(declared, atoms) {
     if (w !== g) diffs.push(`${s}: declared ${w}, built ${g}`)
   }
   return diffs
+}
+
+/** One entry per distinct bond kind, in the order the bonds appear. */
+function distinctBondTypes(atoms, bonds) {
+  const seen = new Map()
+  for (const bond of bonds) {
+    const a = atoms[bond.a].element
+    const b = atoms[bond.b].element
+    const key = `${a}-${b}-${bond.order}`
+    if (!seen.has(key)) seen.set(key, { a, b, order: bond.order, length: bond.length })
+  }
+  return [...seen.values()]
 }
 
 /** Angle at `vertex` between the bonds to `a` and `b`, degrees. */
@@ -5758,9 +5986,18 @@ const molecules = DEFINITIONS.map((def) => {
     everydayZh: uses?.itemsZh ?? [],
     everydayEn: uses?.itemsEn ?? [],
     molarMass: Number(mass.toFixed(3)),
-    atoms: centred,
-    bonds: enrichedBonds,
+    // Everything the gallery, the search and the readout need is summarised here,
+    // so only the 3D viewer has to pull in the coordinates themselves.
+    atomCount: centred.length,
+    bondCounts: {
+      single: enrichedBonds.filter((b) => b.order === 1).length,
+      double: enrichedBonds.filter((b) => b.order === 2).length,
+      triple: enrichedBonds.filter((b) => b.order === 3).length,
+    },
+    composition: [...composition(centred)].map(([symbol, count]) => ({ symbol, count })),
+    bondTypes: distinctBondTypes(centred, enrichedBonds),
     extent: Number(extent.toFixed(3)),
+    geometry: { atoms: centred, bonds: enrichedBonds },
   }
 })
 
@@ -5785,7 +6022,14 @@ if (problems.length) {
   process.exit(1)
 }
 
-writeFileSync(OUT, `${JSON.stringify(molecules)}\n`)
+const metadata = molecules.map((m) => {
+  const record = { ...m }
+  delete record.geometry
+  return record
+})
+const geometry = Object.fromEntries(molecules.map((m) => [m.id, m.geometry]))
+writeFileSync(OUT, `${JSON.stringify(metadata)}\n`)
+writeFileSync(GEOMETRY_OUT, `${JSON.stringify(geometry)}\n`)
 writeFileSync(
   resolve(here, '../src/data/atomRadii.json'),
   `${JSON.stringify(RADII)}\n`,
@@ -5797,7 +6041,7 @@ const byCategory = CATEGORY_ORDER.map(
 console.log(`Wrote ${molecules.length} molecules (${byCategory}) -> ${OUT}`)
 for (const m of molecules) {
   console.log(
-    `  ${m.formulaDisplay.padEnd(8)} ${m.nameZh.padEnd(6)} ${String(m.atoms.length).padStart(2)} atoms, ` +
-      `${String(m.bonds.length).padStart(2)} bonds, ${m.molarMass} g/mol`,
+    `  ${m.formulaDisplay.padEnd(8)} ${m.nameZh.padEnd(6)} ${String(m.atomCount).padStart(2)} atoms, ` +
+      `${String(m.geometry.bonds.length).padStart(2)} bonds, ${m.molarMass} g/mol`,
   )
 }

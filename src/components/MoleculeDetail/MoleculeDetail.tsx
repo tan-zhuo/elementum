@@ -5,6 +5,7 @@ import {
   MOLECULE_CATEGORY_COLORS,
   MOLECULE_CATEGORY_LABELS,
   atomColor,
+  bondCount,
   bondSummary,
   composition,
   moleculeName,
@@ -96,17 +97,14 @@ export function MoleculeDetail({ molecule }: { molecule: Molecule }) {
   }
 
   // Distinct bond lengths, so the readout stays short for symmetric molecules.
-  const distinctBonds = useMemo(() => {
-    const seen = new Map<string, { label: string; length: number }>()
-    for (const bond of molecule.bonds) {
-      const a = molecule.atoms[bond.a].element
-      const b = molecule.atoms[bond.b].element
-      const symbol = bond.order === 1 ? '—' : bond.order === 2 ? '=' : '≡'
-      const label = `${a}${symbol}${b}`
-      if (!seen.has(label)) seen.set(label, { label, length: bond.length })
-    }
-    return [...seen.values()]
-  }, [molecule])
+  const distinctBonds = useMemo(
+    () =>
+      molecule.bondTypes.map((bond) => ({
+        label: `${bond.a}${bond.order === 1 ? '—' : bond.order === 2 ? '=' : '≡'}${bond.b}`,
+        length: bond.length,
+      })),
+    [molecule],
+  )
 
   return (
     <div className="flex h-full flex-col">
@@ -177,7 +175,7 @@ export function MoleculeDetail({ molecule }: { molecule: Molecule }) {
             <dl className="divide-y divide-white/5">
               <Row label={t('molarMass')} value={`${molecule.molarMass.toFixed(3)} g/mol`} />
               <Row label={t('shape')} value={moleculeShape(molecule, locale)} />
-              <Row label={t('atoms')} value={molecule.atoms.length} />
+              <Row label={t('atoms')} value={molecule.atomCount} />
               <Row
                 label={t('bonds')}
                 value={
@@ -187,7 +185,7 @@ export function MoleculeDetail({ molecule }: { molecule: Molecule }) {
                     bonds.triple ? `${bonds.triple} ${t('bondTriple')}` : null,
                   ]
                     .filter(Boolean)
-                    .join(' · ') || molecule.bonds.length
+                    .join(' · ') || bondCount(molecule)
                 }
               />
             </dl>

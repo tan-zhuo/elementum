@@ -67,18 +67,17 @@ export const MOLECULE_CATEGORY_LABELS: Record<MoleculeCategory, { zh: string; en
 
 /** Element symbol -> atom count, in the order the atoms appear. */
 export function composition(m: Molecule): { symbol: string; count: number }[] {
-  const counts = new Map<string, number>()
-  for (const atom of m.atoms) counts.set(atom.element, (counts.get(atom.element) ?? 0) + 1)
-  return [...counts].map(([symbol, count]) => ({ symbol, count }))
+  return m.composition
 }
 
 /** Bond counts by order, for the detail readout. */
 export function bondSummary(m: Molecule): { single: number; double: number; triple: number } {
-  return {
-    single: m.bonds.filter((b) => b.order === 1).length,
-    double: m.bonds.filter((b) => b.order === 2).length,
-    triple: m.bonds.filter((b) => b.order === 3).length,
-  }
+  return m.bondCounts
+}
+
+/** Total number of bonds, however they are drawn. */
+export function bondCount(m: Molecule): number {
+  return m.bondCounts.single + m.bondCounts.double + m.bondCounts.triple
 }
 
 /**
@@ -102,7 +101,7 @@ function score(m: Molecule, query: string): number {
   if (m.nameZh.startsWith(query.trim())) return 60
   if (name.includes(q) || formula.includes(q)) return 40
   if (m.nameZh.includes(query.trim())) return 40
-  if (m.atoms.some((a) => a.element.toLowerCase() === q)) return 20
+  if (m.composition.some((c) => c.symbol.toLowerCase() === q)) return 20
 
   return 0
 }

@@ -3,7 +3,7 @@ import type { ComponentRef } from 'react'
 import { useThree } from '@react-three/fiber'
 import { Html, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
-import type { Molecule, MoleculeStyle, Vec3 } from '../../types/molecule'
+import type { MoleculeGeometry, MoleculeStyle, Vec3 } from '../../types/molecule'
 import { atomColor, atomRadii } from '../../data/molecules'
 import { fitDistance, orbitPosition } from '../../lib/camera'
 
@@ -32,12 +32,12 @@ function atomRadiusFor(symbol: string, style: MoleculeStyle): number {
  * atom, which C60 turns into 150 of them. Meshes instead reference these unit
  * primitives and carry their size in `scale`.
  */
-function useSharedResources(molecule: Molecule, sphereSegments: number) {
+function useSharedResources(geometry: MoleculeGeometry, sphereSegments: number) {
   const resources = useMemo(() => {
     const sphere = new THREE.SphereGeometry(1, sphereSegments, sphereSegments)
     const cylinder = new THREE.CylinderGeometry(1, 1, 1, 12, 1)
     const materials = new Map<string, THREE.MeshStandardMaterial>()
-    for (const atom of molecule.atoms) {
+    for (const atom of geometry.atoms) {
       if (materials.has(atom.element)) continue
       materials.set(
         atom.element,
@@ -49,7 +49,7 @@ function useSharedResources(molecule: Molecule, sphereSegments: number) {
       )
     }
     return { sphere, cylinder, materials }
-  }, [molecule, sphereSegments])
+  }, [geometry, sphereSegments])
 
   // Passed by prop rather than declared as JSX, so three does not dispose them for
   // us when a mesh unmounts.
@@ -159,7 +159,8 @@ function Bond({ from, to, materialA, materialB, order, offset, geometry }: BondP
 }
 
 export interface MoleculeSceneProps {
-  molecule: Molecule
+  moleculeId: string
+  geometry: MoleculeGeometry
   style: MoleculeStyle
   showLabels: boolean
   autoRotate: boolean
@@ -168,7 +169,8 @@ export interface MoleculeSceneProps {
 }
 
 export function MoleculeScene({
-  molecule,
+  moleculeId,
+  geometry,
   style,
   showLabels,
   autoRotate,
@@ -178,17 +180,17 @@ export function MoleculeScene({
   const size = useThree((state) => state.size)
 
   // Fewer segments once there are enough atoms for the vertex count to matter.
-  const sphereSegments = molecule.atoms.length > 30 ? 20 : 32
-  const { sphere, cylinder, materials } = useSharedResources(molecule, sphereSegments)
+  const sphereSegments = geometry.atoms.length > 30 ? 20 : 32
+  const { sphere, cylinder, materials } = useSharedResources(geometry, sphereSegments)
 
   // Space-filling spheres reach further out than the ball-and-stick ones, so the
   // framing radius follows the active style rather than a single stored extent.
   const radius = useMemo(() => {
     const reach = Math.max(
-      ...molecule.atoms.map((a) => Math.hypot(...a.position) + atomRadiusFor(a.element, style)),
+      ...geometry.atoms.map((a) => Math.hypot(...a.position) + atomRadiusFor(a.element, style)),
     )
     return reach + 0.3
-  }, [molecule, style])
+  }, [geometry, style])
 
   const distance = fitDistance(radius, size.width / size.height, 1.15, 4)
   const distanceRef = useRef(distance)
@@ -200,10 +202,10 @@ export function MoleculeScene({
     controls.object.position.set(...orbitPosition(distanceRef.current))
     controls.target.set(0, 0, 0)
     controls.update()
-  }, [molecule.id, style, resetToken])
+  }, [moleculeId, style, resetToken])
 
   // Labels would be unreadable stacked 60 deep on a fullerene.
-  const labelsWorthShowing = showLabels && molecule.atoms.length <= 24
+  const labelsWorthShowing = showLabels && geometry.atoms.length <= 24
 
   return (
     <>
@@ -211,7 +213,7 @@ export function MoleculeScene({
       <directionalLight position={[6, 8, 10]} intensity={2.4} />
       <directionalLight position={[-8, -4, -6]} intensity={0.9} color="#7DD3FC" />
 
-      {molecule.atoms.map((atom, i) => (
+      {geometry.atoms.map((atom, i) => (
         <mesh
           key={i}
           position={atom.position}
@@ -223,13 +225,13 @@ export function MoleculeScene({
 
       {/* Space-filling has no visible gaps, so bonds would be hidden anyway. */}
       {style !== 'space-filling' &&
-        molecule.bonds.map((bond, i) => (
+        geometry.bonds.map((bond, i) => (
           <Bond
             key={i}
-            from={molecule.atoms[bond.a].position}
-            to={molecule.atoms[bond.b].position}
-            materialA={materials.get(molecule.atoms[bond.a].element)!}
-            materialB={materials.get(molecule.atoms[bond.b].element)!}
+            from={geometry.atoms[bond.a].position}
+            to={geometry.atoms[bond.b].position}
+            materialA={materials.get(geometry.atoms[bond.a].element)!}
+            materialB={materials.get(geometry.atoms[bond.b].element)!}
             order={bond.order}
             offset={bond.offset}
             geometry={cylinder}
@@ -237,7 +239,7 @@ export function MoleculeScene({
         ))}
 
       {labelsWorthShowing &&
-        molecule.atoms.map((atom, i) => (
+        geometry.atoms.map((atom, i) => (
           <Html
             key={i}
             position={atom.position}

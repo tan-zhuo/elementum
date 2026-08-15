@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Canvas } from '@react-three/fiber'
 import type { Molecule, MoleculeStyle } from '../../types/molecule'
 import { atomColor, composition } from '../../data/molecules'
+import { moleculeGeometry } from '../../data/moleculeGeometry'
 import { useAppStore } from '../../stores/useAppStore'
 import { translate } from '../../i18n'
 import { CAMERA_FOV, fitDistance, orbitPosition } from '../../lib/camera'
@@ -35,6 +36,8 @@ export function MoleculeModel({ molecule }: { molecule: Molecule }) {
   const hasWebGL = useMemo(() => supportsWebGL(), [])
   const distance = fitDistance(molecule.extent, 1, 1.15, 4)
   const elements = useMemo(() => composition(molecule), [molecule])
+  // Coordinates arrive with this chunk, not with the initial bundle.
+  const geometry = useMemo(() => moleculeGeometry(molecule.id), [molecule.id])
 
   // Escape leaves fullscreen. Capture phase so it wins over the detail panel's own
   // Escape handler, which would otherwise close the panel underneath.
@@ -72,7 +75,8 @@ export function MoleculeModel({ molecule }: { molecule: Molecule }) {
           gl={{ antialias: true, powerPreference: 'high-performance' }}
         >
           <MoleculeScene
-            molecule={molecule}
+            moleculeId={molecule.id}
+            geometry={geometry}
             style={style}
             showLabels={showLabels}
             autoRotate={autoRotate}
@@ -83,7 +87,7 @@ export function MoleculeModel({ molecule }: { molecule: Molecule }) {
         <div className="pointer-events-none absolute left-3 top-3 select-none">
           <div className="text-2xl font-semibold text-white/90">{molecule.formulaDisplay}</div>
           <div className="text-xs text-slate-400">
-            {molecule.atoms.length} {t('atoms')} · {molecule.bonds.length} {t('bonds')}
+            {geometry.atoms.length} {t('atoms')} · {geometry.bonds.length} {t('bonds')}
           </div>
         </div>
 
