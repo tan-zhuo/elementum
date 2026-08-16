@@ -156,9 +156,21 @@ export default function App() {
   const molecule = selectedMolecule !== null ? getMolecule(selectedMolecule) : undefined
   const panelOpen = Boolean(element ?? molecule)
 
+  // Title, language and description follow the chosen locale, so a page shared or
+  // indexed after switching to English is described in English.
   useEffect(() => {
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
-    document.title = `${translate('appTitle', locale)} · ${translate('appSubtitle', locale)}`
+    document.title = translate('documentTitle', locale)
+    for (const [selector, key] of [
+      ['meta[name="description"]', 'metaDescription'],
+      ['meta[property="og:description"]', 'metaDescription'],
+      ['meta[name="twitter:description"]', 'metaDescription'],
+    ] as const) {
+      document.querySelector(selector)?.setAttribute('content', translate(key, locale))
+    }
+    document
+      .querySelector('meta[property="og:locale"]')
+      ?.setAttribute('content', locale === 'zh' ? 'zh_CN' : 'en_US')
   }, [locale])
 
   // The whole palette hangs off this one attribute. The browser chrome colour is
@@ -260,7 +272,10 @@ export default function App() {
                 <span className="accent-border absolute inset-0.5 rounded-md border" />
                 <span className="accent-border absolute inset-1.5 rotate-45 rounded-sm border" />
               </span>
-              <div className="hidden leading-tight xl:block">
+              {/* Screen-reader-only rather than `hidden` below xl: the page needs an
+                  h1 in the accessibility tree (and in the rendered DOM a crawler
+                  sees) at every width, not only on wide screens. */}
+              <div className="sr-only leading-tight xl:not-sr-only xl:block">
                 <h1 className="text-sm font-semibold text-slate-100">
                   {translate('appTitle', locale)}
                 </h1>

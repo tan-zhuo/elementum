@@ -6,11 +6,91 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#05080f" />
+
+    <title>元素周期表 · 3D 交互式原子与分子结构 | Elementum</title>
     <meta
       name="description"
-      content="交互式 3D 元素周期表与分子结构：118 种元素、129 种分子（含二十种氨基酸），点击查看原子核、电子层与真实三维分子构型。纯前端，支持搜索、分类筛选、属性热力图、主题配色与中英文切换。"
+      content="交互式 3D 元素周期表与分子结构：118 种元素、129 种分子（含二十种氨基酸与平面肽键），点击即可查看原子核、电子层与真实三维分子构型。纯前端、无需注册，支持搜索、分类筛选、属性热力图、六套主题配色与中英文切换。"
     />
-    <title>元素周期表 · 3D 交互式原子结构</title>
+    <meta name="author" content="tan-zhuo" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <!-- Every absolute URL below comes from VITE_SITE_URL (see .env), so moving the
+         deployment is a one-line change. -->
+    <link rel="canonical" href="%VITE_SITE_URL%" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Elementum" />
+    <meta property="og:title" content="元素周期表 · 3D 交互式原子与分子结构" />
+    <meta
+      property="og:description"
+      content="118 种元素、129 种分子的 3D 交互式化学可视化：原子核与电子层、真实分子构型、二十种氨基酸与平面肽键，并附每一条的作用与生活应用。"
+    />
+    <meta property="og:url" content="%VITE_SITE_URL%" />
+    <meta property="og:image" content="%VITE_SITE_URL%og.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="元素周期表 · 3D 交互式原子与分子结构" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale:alternate" content="en_US" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="元素周期表 · 3D 交互式原子与分子结构" />
+    <meta
+      name="twitter:description"
+      content="118 种元素、129 种分子的 3D 交互式化学可视化，含二十种氨基酸与平面肽键。"
+    />
+    <meta name="twitter:image" content="%VITE_SITE_URL%og.jpg" />
+
+    <link rel="manifest" href="./site.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="元素周期表" />
+    <meta name="application-name" content="Elementum" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "%VITE_SITE_URL%#website",
+            "url": "%VITE_SITE_URL%",
+            "name": "Elementum · 元素周期表",
+            "description": "118 种元素与 129 种分子的 3D 交互式化学可视化。",
+            "inLanguage": ["zh-CN", "en"],
+            "author": { "@id": "%VITE_SITE_URL%#author" }
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "%VITE_SITE_URL%#app",
+            "name": "元素周期表 · 3D 交互式原子与分子结构",
+            "url": "%VITE_SITE_URL%",
+            "applicationCategory": "EducationalApplication",
+            "applicationSubCategory": "Chemistry",
+            "operatingSystem": "Any",
+            "browserRequirements": "Requires JavaScript and WebGL",
+            "isAccessibleForFree": true,
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "screenshot": "%VITE_SITE_URL%og.jpg",
+            "inLanguage": ["zh-CN", "en"],
+            "author": { "@id": "%VITE_SITE_URL%#author" },
+            "featureList": [
+              "118 种元素的 3D 原子结构（原子核、电子层、电子运动）",
+              "129 种分子的真实三维构型，含二十种氨基酸与二肽",
+              "元素属性热力图与并排对比",
+              "每种元素与分子的作用与生活应用",
+              "中英文界面与六套主题配色"
+            ]
+          },
+          {
+            "@type": "Person",
+            "@id": "%VITE_SITE_URL%#author",
+            "name": "tan-zhuo",
+            "url": "https://tanzhuo.xyz"
+          }
+        ]
+      }
+    </script>
 
     <!--
       Splash screen.
@@ -386,6 +466,51 @@
   </head>
   <body>
     <div id="root"></div>
+
+    <!--
+      Without JavaScript the splash would sit there covering an empty page, so it is
+      hidden and replaced by something a crawler (or a reader) can actually use.
+    -->
+    <noscript>
+      <style>
+        /* #root is empty but still 100% tall, which would push this below the fold. */
+        #splash,
+        #root {
+          display: none;
+        }
+        .noscript-page {
+          max-width: 46rem;
+          margin: 0 auto;
+          padding: 3rem 1.5rem;
+          color: #cbd5e1;
+          line-height: 1.75;
+          font-family: ui-sans-serif, system-ui, 'Noto Sans CJK SC', 'PingFang SC', sans-serif;
+        }
+        .noscript-page h1 {
+          font-size: 1.5rem;
+          color: #f8fafc;
+        }
+        .noscript-page a {
+          color: #67e8f9;
+        }
+      </style>
+      <div class="noscript-page">
+        <h1>元素周期表 · 3D 交互式原子与分子结构</h1>
+        <p>
+          本站是一个纯前端的化学可视化项目，收录 <strong>118 种元素</strong> 与
+          <strong>129 种分子</strong>（含二十种氨基酸与展示平面肽键的二肽），
+          每一条都配有中英文的作用说明与生活应用清单。
+        </p>
+        <p>
+          元素部分可查看原子核、电子层与绕核运动的电子；分子部分展示由公开键长与键角
+          构造并逐条校验的真实三维构型，支持球棍、空间填充与棍状三种画法。
+        </p>
+        <p>
+          三维渲染需要 JavaScript 与 WebGL，请在浏览器中启用后刷新本页。项目源码见
+          <a href="https://github.com/tan-zhuo/elementum">GitHub</a>。
+        </p>
+      </div>
+    </noscript>
 
     <div id="splash" role="status" aria-live="polite" aria-label="Loading">
       <div class="splash-stage">

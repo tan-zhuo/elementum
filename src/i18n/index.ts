@@ -7,6 +7,16 @@ import type { Locale } from '../types/element'
 const STRINGS = {
   appTitle: { zh: '元素周期表', en: 'Periodic Table' },
   appSubtitle: { zh: '3D 交互式原子结构', en: '3D Interactive Atomic Structure' },
+  // Document title and meta description: longer than the in-page title on purpose,
+  // since these are what a search result and a shared link show.
+  documentTitle: {
+    zh: '元素周期表 · 3D 交互式原子与分子结构 | Elementum',
+    en: 'Periodic Table · 3D Interactive Atomic & Molecular Structures | Elementum',
+  },
+  metaDescription: {
+    zh: '交互式 3D 元素周期表与分子结构：118 种元素、129 种分子（含二十种氨基酸与平面肽键），点击即可查看原子核、电子层与真实三维分子构型。纯前端、无需注册，支持搜索、分类筛选、属性热力图、六套主题配色与中英文切换。',
+    en: 'An interactive 3D periodic table and molecule viewer: 118 elements and 129 molecules, including all twenty amino acids and a dipeptide showing the planar peptide bond. Click any of them for nuclei, electron shells and real 3D geometry — no sign-up, no backend.',
+  },
   searchPlaceholder: {
     zh: '搜索元素：符号 / 中文名 / 英文名 / 原子序数',
     en: 'Search: symbol, name, or atomic number',

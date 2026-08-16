@@ -105,6 +105,20 @@ Vercel / Cloudflare Pages / GitHub Pages（包括子路径项目站点）。
   与构建脚本实际使用的来源一致
 - 底部标注：无后端 · 无追踪 · 数据全部内置；以及"仅供学习参考"的免责说明
 
+**SEO 与分享**
+- 站点地址只写在一处（`vite.config.ts` 的 `DEFAULT_SITE_URL`，可用 `VITE_SITE_URL` 覆盖），
+  canonical、Open Graph、robots.txt、sitemap.xml 全部由它派生；后两个文件在构建时生成，
+  不进 `public/`，避免换域名后悄悄过期
+- Open Graph / Twitter Card 齐全，配 1200×630 的分享卡片（`public/og.jpg`）
+- JSON-LD：`WebSite` + `WebApplication` + `Person`，标注免费、所需浏览器能力与功能清单
+- 标题与描述随语言切换：切到英文后，标签页标题、`description`、`og:description`
+  与 `og:locale` 一起变
+- `site.webmanifest` + 192/512/180 图标，可添加到主屏
+- 关闭 JavaScript 时，开屏动画与空的 `#root` 会被隐藏，改为显示一段说明本站是什么、
+  收录了多少内容的静态文字 —— 不执行 JS 的爬虫至少能读到这些
+- `h1` 在任何宽度下都存在于 DOM（窄屏是 `sr-only` 而非 `hidden`），
+  移动端优先抓取时不会拿到一个没有 h1 的页面
+
 **其他**
 - 中英文切换（元素名 + 分子名 + 全部界面文案），语言、主题与 3D 偏好持久化到 localStorage
 - 深色科技风，响应式（桌面优先；移动端搜索框独占一行，详情页以 3D 视图开头）
@@ -182,7 +196,8 @@ XYZ 数据，而是**由公开的键长与键角构造出来的** —— 这样�
 ## 结构
 
 ```
-index.html                内联开屏动画（首帧绘制，不依赖 JS bundle）
+index.html                head 内的 SEO/OG/JSON-LD、内联开屏动画（首帧绘制）、无 JS 兜底文案
+public/                   favicon、应用图标、og.jpg 分享卡片、site.webmanifest
 scripts/
   build-data.mjs          元素数据生成脚本
   build-molecules.mjs     分子几何生成 + 校验脚本
@@ -267,6 +282,9 @@ mesh 里内联声明 `<sphereGeometry>`，光 C₆₀ 就会分配 150 份几何
 - 104–118 号元素的中文名使用 CJK 扩展 B/C 区罕见字，缺少相应字体的系统会显示为方框。
   已在 CSS 中优先声明 Noto / 思源黑体，英文名始终可用作后备。
 - 中子数由标准原子量四舍五入得出，对应最常见同位素，并非同位素表。
+- **只有一个可索引的 URL**：元素与分子都是应用内状态，没有各自的地址，因此站点地图
+  只有一条。要让"咖啡因"这类词各自有落地页，需要引入路由并做预渲染 —— 那是另一件工程，
+  没有做。同理，分享任何一个分子，抓到的都是同一张 og 卡片。
 - 六套主题都是深色系：3D 视图与元素类别配色都建立在深底之上，浅色主题需要重做整套
   对比关系，未做。
 - 臭氧、二氧化氮、苯、萘画的是单一路易斯结构（凯库勒式），实际为共振离域，
